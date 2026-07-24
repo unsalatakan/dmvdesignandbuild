@@ -35,7 +35,9 @@ body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-
 
 /* shell */
 .app { display: flex; min-height: 100vh; }
-.sidebar { width: 230px; background: var(--black); display: flex; flex-direction: column; padding: 22px 16px; position: fixed; top: 0; bottom: 0; }
+.topbar { display: none; }
+.nav-back { display: none; }
+.sidebar { width: 230px; background: var(--black); display: flex; flex-direction: column; padding: 22px 16px; position: fixed; top: 0; bottom: 0; z-index: 1000; }
 .side-logo { width: 150px; align-self: center; margin-bottom: 26px; background: #fff; border-radius: 10px; padding: 10px; }
 .sidebar nav a { display: block; color: #cfd2d8; text-decoration: none; padding: 11px 14px; border-radius: 8px; margin-bottom: 4px; font-size: 14.5px; font-weight: 500; }
 .sidebar nav a:hover { background: #262931; }
@@ -116,11 +118,52 @@ input.f:focus, select.f:focus { outline: 2px solid var(--gold); border-color: tr
 .info-grid .k { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.5px; }
 .info-grid .v { font-size: 15px; font-weight: 600; margin-top: 3px; }
 
+/* ---------- mobile ---------- */
 @media (max-width: 800px) {
-  .sidebar { width: 70px; padding: 14px 8px; }
-  .side-logo { width: 50px; padding: 4px; }
-  .sidebar nav a { font-size: 11px; padding: 9px 6px; text-align: center; }
-  .whoami { display: none; }
-  .main { margin-left: 70px; padding: 18px; }
+  .app { display: block; }
+
+  /* top bar with hamburger */
+  .topbar { display: flex; align-items: center; gap: 12px; position: fixed; top: 0; left: 0; right: 0; height: 56px; background: var(--black); z-index: 1100; padding: 0 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+  .menu-btn { background: none; border: none; color: #fff; font-size: 24px; padding: 8px 10px; cursor: pointer; line-height: 1; }
+  .top-logo { height: 38px; background: #fff; border-radius: 8px; padding: 4px 8px; }
+  .top-spacer { flex: 1; }
+
+  /* sidebar becomes a slide-in drawer */
+  .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; width: 250px; padding-top: 68px; box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
+  .sidebar.open { transform: translateX(0); }
+  .nav-back.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 900; }
+  .sidebar nav a { padding: 14px; font-size: 16px; }
+
+  .main { margin-left: 0; padding: 70px 14px 24px; }
+
+  /* headers & cards */
+  .page-head { flex-wrap: wrap; gap: 10px; }
+  .page-head h1 { font-size: 19px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+  .stat { padding: 14px 16px; }
+  .stat .num { font-size: 20px; }
+  .panel { padding: 14px; }
+
+  /* maps */
+  #homemap { height: 260px; }
+  .map-hint { top: 24px; right: 24px; }
+
+  /* tables scroll sideways instead of squishing */
+  .table-scroll, .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 520px; }
+
+  /* forms & modal */
   .form-grid { grid-template-columns: 1fr; }
+  input.f, select.f, .login-card input { font-size: 16px; } /* stops iOS auto-zoom */
+  .btn { padding: 12px 16px; }
+  .btn.small { padding: 8px 12px; font-size: 13px; }
+  .modal-back { padding: 10px; align-items: flex-end; }
+  .modal-card { width: 100%; border-radius: 14px 14px 0 0; max-height: 92vh; padding: 20px 16px; }
+
+  /* login */
+  .login-card { width: 100%; max-width: 360px; padding: 30px 22px; margin: 0 14px; }
+
+  /* job cards single column */
+  .job-grid { grid-template-columns: 1fr; }
+  .file-chip { display: flex; margin-right: 0; }
 }

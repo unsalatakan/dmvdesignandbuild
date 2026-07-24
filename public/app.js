@@ -48,6 +48,15 @@ $('#loginForm').addEventListener('submit', async (e) => {
 });
 $('#logoutBtn').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.hash = ''; location.reload(); });
 
+/* ---------- mobile menu ---------- */
+function closeMenu() { $('#sidebar').classList.remove('open'); $('#navBack').classList.remove('show'); }
+$('#menuBtn').addEventListener('click', () => {
+  $('#sidebar').classList.toggle('open');
+  $('#navBack').classList.toggle('show', $('#sidebar').classList.contains('open'));
+});
+$('#navBack').addEventListener('click', closeMenu);
+$('#navLinks').addEventListener('click', closeMenu);
+
 /* ---------- router ---------- */
 window.addEventListener('hashchange', route);
 function route() {
