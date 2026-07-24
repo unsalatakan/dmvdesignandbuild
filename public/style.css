@@ -123,9 +123,9 @@ input.f:focus, select.f:focus { outline: 2px solid var(--gold); border-color: tr
   .app { display: block; }
 
   /* top bar with hamburger */
-  .topbar { display: flex; align-items: center; gap: 12px; position: fixed; top: 0; left: 0; right: 0; height: 56px; background: var(--black); z-index: 1100; padding: 0 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
-  .menu-btn { background: none; border: none; color: #fff; font-size: 24px; padding: 8px 10px; cursor: pointer; line-height: 1; }
-  .top-logo { height: 38px; background: #fff; border-radius: 8px; padding: 4px 8px; }
+  .topbar { display: flex; align-items: center; position: fixed; top: 0; left: 0; right: 0; height: 60px; background: #fff; z-index: 1100; padding: 0 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.12); }
+  .menu-btn { background: none; border: none; color: var(--black); font-size: 26px; padding: 8px 10px; cursor: pointer; line-height: 1; }
+  .top-logo { height: 48px; position: absolute; left: 50%; transform: translateX(-50%); }
   .top-spacer { flex: 1; }
 
   /* sidebar becomes a slide-in drawer */
@@ -145,11 +145,13 @@ input.f:focus, select.f:focus { outline: 2px solid var(--gold); border-color: tr
   .panel { padding: 14px; }
 
   /* maps */
-  #homemap { height: 260px; }
+  #homemap { height: 300px; width: 100%; }
+  .map-card { overflow: hidden; }
   .map-hint { top: 24px; right: 24px; }
+  .map-close { top: auto; bottom: 24px; right: 50%; transform: translateX(50%); }
 
-  /* tables scroll sideways instead of squishing */
-  .table-scroll, .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* tables scroll sideways instead of squishing (but never the map panel) */
+  .panel:not(.map-card) { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { min-width: 520px; }
 
   /* forms & modal */

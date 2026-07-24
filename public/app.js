@@ -88,6 +88,7 @@ async function renderHome() {
       <div id="homemap"></div>
     </div>`;
   homeMap = drawMap('homemap', projects, false);
+  setTimeout(() => homeMap.invalidateSize(), 120);
   $('#mapCard').addEventListener('click', () => openFullMap(projects));
 }
 
