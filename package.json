@@ -1,0 +1,9 @@
+{
+  "name": "dmv-portal",
+  "version": "1.0.0",
+  "description": "DMV Design and Build - Commercial Construction Project Portal (no dependencies, Node 18+)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

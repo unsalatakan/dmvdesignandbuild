@@ -1,0 +1,57 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "dmv",
+      "password": "e8f76633788941429d3cab6aa1ad1ad8a5cb9a9e59d02d5c6881c2b90d9a203b",
+      "role": "admin",
+      "name": "DMV Design and Build"
+    },
+    {
+      "id": 2,
+      "username": "nasrullah",
+      "password": "1a8df5559f705704fc86ad8cff878ad7f8fd8ffd22e551aeaad7231480f03524",
+      "role": "customer",
+      "name": "Nasrullah"
+    }
+  ],
+  "projects": [
+    {
+      "id": 3,
+      "name": "Nash and Smashed Dundalk",
+      "address": "1145 Merritt Blvd, Dundalk, MD 21222",
+      "price": 225000,
+      "startDate": "2026-07-13",
+      "customerId": 2,
+      "lat": 39.2817007,
+      "lng": -76.5043017,
+      "contractFile": "1784905767080_a24ede_Nash_and_Smashed_-_DUNDALK.pdf",
+      "contractName": "Nash and Smashed - DUNDALK.pdf",
+      "planFile": null,
+      "planName": null,
+      "materialFileName": null,
+      "materials": [],
+      "notes": [],
+      "created": "2026-07-24T15:09:27.875Z"
+    },
+    {
+      "id": 4,
+      "name": "Nash and Smashed Rockville",
+      "address": "1060 Rockville Pike, Rockville, MD 20852",
+      "price": 0,
+      "startDate": "2026-07-12",
+      "customerId": 2,
+      "lat": 39.072138,
+      "lng": -77.13299,
+      "contractFile": null,
+      "contractName": null,
+      "planFile": "1784905985886_859aed_Nash_and_Smahsed_-_ROCKVILLE_ARCH_PLAN.pdf",
+      "planName": "Nash and Smahsed - ROCKVILLE ARCH PLAN.pdf",
+      "materialFileName": null,
+      "materials": [],
+      "notes": [],
+      "created": "2026-07-24T15:13:06.198Z"
+    }
+  ],
+  "seq": 5
+}

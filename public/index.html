@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DMV Design and Build — Project Portal</title>
+<link rel="icon" href="logo.png" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginView" class="login-wrap hidden">
+  <div class="login-card">
+    <img src="logo.png" alt="DMV Design and Build" class="login-logo" />
+    <h2>Project Portal</h2>
+    <form id="loginForm">
+      <input type="text" id="loginUser" placeholder="Username" autocomplete="username" required />
+      <input type="password" id="loginPass" placeholder="Password" autocomplete="current-password" required />
+      <button type="submit" class="btn gold w100">Sign In</button>
+      <div id="loginError" class="error"></div>
+    </form>
+  </div>
+</div>
+
+<!-- APP SHELL -->
+<div id="appView" class="app hidden">
+  <aside class="sidebar">
+    <img src="logo.png" alt="DMV" class="side-logo" />
+    <nav id="navLinks"></nav>
+    <div class="side-bottom">
+      <div id="whoami" class="whoami"></div>
+      <button id="logoutBtn" class="btn ghost w100">Log out</button>
+    </div>
+  </aside>
+  <main id="main" class="main"></main>
+</div>
+
+<!-- FULLSCREEN MAP -->
+<div id="mapFull" class="map-full hidden">
+  <button id="mapCloseBtn" class="btn gold map-close">✕ Close Map</button>
+  <div id="bigmap"></div>
+</div>
+
+<!-- MODAL -->
+<div id="modal" class="modal-back hidden">
+  <div class="modal-card" id="modalCard"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
