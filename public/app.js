@@ -85,7 +85,10 @@ async function renderHome() {
 function drawMap(elId, projects, interactivePopups) {
   const located = projects.filter((p) => p.lat && p.lng);
   const map = L.map(elId, { scrollWheelZoom: interactivePopups });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+  L.tileLayer('https://{s}.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}', {
+    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+    attribution: '&copy; Google Maps'
+  }).addTo(map);
   if (located.length) {
     const group = L.featureGroup(located.map((p) => {
       const m = L.marker([p.lat, p.lng]).bindPopup(
