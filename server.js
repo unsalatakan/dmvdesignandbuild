@@ -500,7 +500,10 @@ route('PUT', /^\/api\/projects\/(\d+)\/materials\/(\d+)$/, (req, res, m, body, u
   if (error) return json(res, error[0], { error: error[1] });
   const mat = p.materials.find((x) => x.id === Number(m[2]));
   if (!mat) return json(res, 404, { error: 'Material not found' });
-  if (body.ordered !== undefined) mat.ordered = !!body.ordered;
+  if (body.ordered !== undefined) {
+    mat.ordered = !!body.ordered;
+    mat.orderedAt = mat.ordered ? new Date().toISOString() : null;
+  }
   saveDb(); json(res, 200, mat);
 }, { admin: true });
 

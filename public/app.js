@@ -83,6 +83,60 @@ function route() {
   renderHome();
 }
 
+/* ---------- HOME: finance chart (no libraries, plain SVG) ---------- */
+function financeChartSVG(projects) {
+  const totalContract = projects.reduce((s, p) => s + (p.price || 0), 0);
+  const events = []; // { d: 'YYYY-MM-DD', rec, sp }
+  projects.forEach((p) => {
+    (p.payments || []).forEach((x) => {
+      const d = String(x.date || x.created || '').slice(0, 10);
+      if (d) events.push({ d, rec: x.amount || 0, sp: 0 });
+    });
+    (p.materials || []).filter((m) => m.ordered).forEach((m) => {
+      const d = String(m.orderedAt || p.created || new Date().toISOString()).slice(0, 10);
+      events.push({ d, rec: 0, sp: (m.price || 0) * (m.qty || 1) });
+    });
+  });
+  if (!events.length && !totalContract) return '<div class="muted" style="color:#8fa3c0">No payments or material orders recorded yet — the chart will appear once there is activity.</div>';
+  const today = new Date().toISOString().slice(0, 10);
+  let dates = [...new Set([...events.map((e) => e.d), today])].sort();
+  if (dates.length === 1) dates = [dates[0], today > dates[0] ? today : dates[0]]; // ensure a segment
+  let pts = dates.map((d) => {
+    let rec = 0, sp = 0;
+    events.forEach((e) => { if (e.d <= d) { rec += e.rec; sp += e.sp; } });
+    return { t: Date.parse(d), d, rec, sp, out: Math.max(totalContract - rec, 0) };
+  });
+  if (pts.length === 1) pts = [pts[0], { ...pts[0], t: pts[0].t + 86400000 }];
+  const W = 760, H = 280, L = 62, R = 16, T = 16, B = 34;
+  const t0 = pts[0].t, t1 = pts[pts.length - 1].t || t0 + 1;
+  const yMax = Math.max(totalContract, ...pts.map((p) => Math.max(p.out, p.rec, p.sp)), 1) * 1.08;
+  const X = (t) => L + ((t - t0) / (t1 - t0 || 1)) * (W - L - R);
+  const Y = (v) => T + (1 - v / yMax) * (H - T - B);
+  const line = (key) => pts.map((p) => `${X(p.t).toFixed(1)},${Y(p[key]).toFixed(1)}`).join(' ');
+  const kfmt = (v) => v >= 1000000 ? '$' + (v / 1000000).toFixed(1) + 'M' : v >= 1000 ? '$' + Math.round(v / 1000) + 'k' : '$' + Math.round(v);
+  const dfmt = (t) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const gridY = [0.25, 0.5, 0.75, 1].map((f) => {
+    const v = yMax * f, y = Y(v).toFixed(1);
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="rgba(255,255,255,0.10)"/><text x="${L - 8}" y="${Number(y) + 4}" text-anchor="end" fill="rgba(255,255,255,0.55)" font-size="11">${kfmt(v)}</text>`;
+  }).join('');
+  const xLabels = [pts[0], pts[Math.floor(pts.length / 2)], pts[pts.length - 1]]
+    .filter((p, i, a) => a.findIndex((x) => x.t === p.t) === i)
+    .map((p) => `<text x="${X(p.t).toFixed(1)}" y="${H - 10}" text-anchor="middle" fill="rgba(255,255,255,0.55)" font-size="11">${dfmt(p.t)}</text>`).join('');
+  return `
+    <svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+      ${gridY}${xLabels}
+      <line x1="${L}" y1="${Y(0)}" x2="${W - R}" y2="${Y(0)}" stroke="rgba(255,255,255,0.25)"/>
+      <polyline points="${line('out')}" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="7 6" stroke-linejoin="round"/>
+      <polyline points="${line('sp')}" fill="none" stroke="#ff5c5c" stroke-width="2.5" stroke-linejoin="round"/>
+      <polyline points="${line('rec')}" fill="none" stroke="#34d17b" stroke-width="2.5" stroke-linejoin="round"/>
+    </svg>
+    <div class="chart-legend">
+      <span><span class="sw" style="border-top-style:dashed;border-color:#fff"></span>Receivable (outstanding)</span>
+      <span><span class="sw" style="border-color:#ff5c5c"></span>Material spending</span>
+      <span><span class="sw" style="border-color:#34d17b"></span>Money received</span>
+    </div>`;
+}
+
 /* ---------- HOME ---------- */
 async function renderHome() {
   const projects = await api('/api/projects');
@@ -106,6 +160,30 @@ async function renderHome() {
       ${toOrder !== null ? `<div class="stat"><div class="num">${toOrder}</div><div class="lbl">Materials To Order</div></div>
       <div class="stat"><div class="num">${money(toOrderCost)}</div><div class="lbl">Materials To Order Cost</div></div>` : ''}
     </div>
+    ${isAdmin ? `
+    <div class="panel chart-panel">
+      <h3>Cash Flow — Receivable vs. Spending vs. Received</h3>
+      ${financeChartSVG(projects)}
+    </div>
+    <div class="panel">
+      <h3>To-Do — All Jobs</h3>
+      ${(() => {
+        const jobs = projects.filter((p) => (p.notes || []).length);
+        if (!jobs.length) return '<div class="muted">No to-do items yet. Add notes on a job page and they will show up here.</div>';
+        return jobs.map((p) => {
+          const open = p.notes.filter((n) => !n.done).length;
+          return `
+          <div class="todo-job">
+            <h4><a href="#/job/${p.id}">${esc(p.name)}</a> <span class="muted">— ${open ? open + ' open' : 'all done ✓'}</span></h4>
+            ${p.notes.map((n) => `
+            <div class="note-row ${n.done ? 'done' : ''}">
+              <input type="checkbox" data-hnote="${p.id}:${n.id}" ${n.done ? 'checked' : ''} />
+              <span class="note-text">${esc(n.text)}</span>
+            </div>`).join('')}
+          </div>`;
+        }).join('');
+      })()}
+    </div>` : ''}
     <div class="panel map-card" id="mapCard">
       <h3>Job Map</h3>
       <div class="map-hint">Click map to expand ⛶</div>
@@ -122,6 +200,13 @@ async function renderHome() {
         </div>`).join('')}
       </div>
     </div>` : ''}`;
+  document.querySelectorAll('input[data-hnote]').forEach((cb) =>
+    cb.addEventListener('change', async () => {
+      const [pid, nid] = cb.dataset.hnote.split(':');
+      await api(`/api/projects/${pid}/notes/${nid}`, { method: 'PUT', json: { done: cb.checked } });
+      renderHome();
+    })
+  );
   homeMap = drawMap('homemap', projects, false);
   setTimeout(() => homeMap.invalidateSize(), 120);
   $('#mapCard').addEventListener('click', () => openFullMap(projects));

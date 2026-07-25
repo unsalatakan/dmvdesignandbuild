@@ -254,3 +254,19 @@ html.light .whoami { color: #7a7f8a; }
   .job-grid { grid-template-columns: 1fr; }
   .file-chip { display: flex; margin-right: 0; }
 }
+
+/* home finance chart */
+.chart-panel { background: linear-gradient(160deg, #0e1e38 0%, #14294a 100%); border: 1px solid #23406b; }
+.chart-panel h3 { color: #fff; }
+html.light .chart-panel { background: linear-gradient(160deg, #0e1e38 0%, #14294a 100%); }
+html.light .chart-panel h3 { color: #fff; }
+.chart-svg { width: 100%; height: auto; display: block; margin-top: 6px; }
+.chart-legend { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; color: #cfd8e6; }
+.chart-legend .sw { display: inline-block; width: 24px; height: 0; border-top: 3px solid; margin-right: 7px; vertical-align: middle; }
+
+/* home to-do by job */
+.todo-job { margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid rgba(128,128,128,0.15); }
+.todo-job:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.todo-job h4 { margin-bottom: 8px; font-size: 15px; }
+.todo-job h4 a { color: var(--gold); text-decoration: none; }
+.todo-job h4 a:hover { text-decoration: underline; }
