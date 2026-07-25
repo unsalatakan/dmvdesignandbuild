@@ -50,7 +50,9 @@ $('#logoutBtn').addEventListener('click', async () => { await api('/api/logout',
 
 /* ---------- theme toggle ---------- */
 function paintThemeBtn() {
-  $('#themeBtn').textContent = document.documentElement.classList.contains('light') ? '🌙 Dark Mode' : '☀️ Light Mode';
+  const light = document.documentElement.classList.contains('light');
+  $('#themeBtn').textContent = light ? '🌙 Dark Mode' : '☀️ Light Mode';
+  $('#themeColor').setAttribute('content', light ? '#f5f7fb' : '#0a1628');
 }
 $('#themeBtn').addEventListener('click', () => {
   const light = document.documentElement.classList.toggle('light');
