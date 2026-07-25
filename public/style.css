@@ -156,6 +156,31 @@ input.f:focus, select.f:focus { outline: 2px solid var(--gold); border-color: tr
 .info-grid .k { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.5px; }
 .info-grid .v { font-size: 15px; font-weight: 600; margin-top: 3px; }
 
+/* ---------- dark mode: dark cards instead of white ---------- */
+html:not(.light) .stat, html:not(.light) .panel, html:not(.light) .job-card {
+  background: #16243d; border: 1px solid rgba(255,255,255,0.07); color: #e9eef6;
+}
+html:not(.light) .panel h3, html:not(.light) .stat .lbl,
+html:not(.light) .job-card .addr, html:not(.light) .job-meta,
+html:not(.light) .info-grid .k, html:not(.light) .panel .muted,
+html:not(.light) .panel.muted, html:not(.light) .panel label.f { color: #93a3ba; }
+html:not(.light) .job-meta b { color: #e9eef6; }
+html:not(.light) th { color: #93a3ba; border-bottom-color: rgba(255,255,255,0.14); }
+html:not(.light) td { border-bottom-color: rgba(255,255,255,0.08); }
+html:not(.light) .totals-row td { border-top-color: rgba(255,255,255,0.16); }
+html:not(.light) tr.ordered td { color: #6d7c92; }
+html:not(.light) td a { color: #3fc07f; }
+html:not(.light) .note-row { border-bottom-color: rgba(255,255,255,0.08); }
+html:not(.light) .note-row.done .note-text { color: #6d7c92; }
+html:not(.light) .del { color: #6d7c92; }
+html:not(.light) .panel input.f, html:not(.light) .panel select.f {
+  background: #0f1a2e; border-color: rgba(255,255,255,0.16); color: #e9eef6;
+}
+html:not(.light) .badge { background: rgba(29,157,92,0.22); color: #48c684; }
+html:not(.light) .file-chip { background: rgba(29,157,92,0.12); border-color: rgba(29,157,92,0.35); color: #48c684; }
+html:not(.light) .file-chip:hover { background: rgba(29,157,92,0.22); }
+html:not(.light) .photo-item { background: #0f1a2e; }
+
 /* ---------- light mode ---------- */
 html.light body { background: linear-gradient(160deg, #f5f7fb 0%, #eaeef6 55%, #dfe6f2 100%) fixed; }
 html.light .page-head h1 { color: var(--text); text-shadow: none; }
@@ -170,9 +195,9 @@ html.light .sidebar { background: var(--black); backdrop-filter: none; }
   .app { display: block; }
 
   /* top bar with hamburger */
-  .topbar { display: flex; align-items: center; position: fixed; top: 0; left: 0; right: 0; height: 60px; background: rgba(6,13,26,0.95); border-bottom: 1px solid rgba(29,157,92,0.3); z-index: 1100; padding: 0 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.3); }
-  .menu-btn { background: none; border: none; color: #fff; font-size: 26px; padding: 8px 10px; cursor: pointer; line-height: 1; }
-  .top-logo { height: 44px; position: absolute; left: 50%; transform: translateX(-50%); background: #fff; border-radius: 8px; padding: 4px 8px; }
+  .topbar { display: flex; align-items: center; position: fixed; top: 0; left: 0; right: 0; height: 60px; background: #fff; z-index: 1100; padding: 0 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.25); }
+  .menu-btn { background: none; border: none; color: #17181c; font-size: 26px; padding: 8px 10px; cursor: pointer; line-height: 1; }
+  .top-logo { height: 48px; position: absolute; left: 50%; transform: translateX(-50%); }
   .top-spacer { flex: 1; }
 
   /* sidebar becomes a slide-in drawer */
