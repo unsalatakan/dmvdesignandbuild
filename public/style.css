@@ -219,7 +219,7 @@ html.light .whoami { color: #7a7f8a; }
   .side-logo { display: none; } /* top bar already shows the logo on mobile */
   .sidebar nav a { padding: 14px; font-size: 16px; }
 
-  .main { margin-left: 0; padding: calc(88px + env(safe-area-inset-top)) 14px 24px; }
+  .main { margin-left: 0; padding: calc(94px + env(safe-area-inset-top)) 14px 24px; }
 
   /* headers & cards */
   .page-head { flex-wrap: wrap; gap: 10px; }
