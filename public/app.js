@@ -86,25 +86,30 @@ function route() {
 /* ---------- HOME: finance chart (no libraries, plain SVG) ---------- */
 function financeChartSVG(projects) {
   const totalContract = projects.reduce((s, p) => s + (p.price || 0), 0);
-  const events = []; // { d: 'YYYY-MM-DD', rec, sp }
+  const events = []; // { d: 'YYYY-MM-DD', con, rec, sp } — all pulled from each job's data
   projects.forEach((p) => {
+    if (p.price) {
+      // contract value becomes receivable on the job's start date (fallback: date the job was created)
+      const d = String(p.startDate || p.created || '').slice(0, 10);
+      if (d) events.push({ d, con: p.price, rec: 0, sp: 0 });
+    }
     (p.payments || []).forEach((x) => {
       const d = String(x.date || x.created || '').slice(0, 10);
-      if (d) events.push({ d, rec: x.amount || 0, sp: 0 });
+      if (d) events.push({ d, con: 0, rec: x.amount || 0, sp: 0 });
     });
     (p.materials || []).filter((m) => m.ordered).forEach((m) => {
       const d = String(m.orderedAt || p.created || new Date().toISOString()).slice(0, 10);
-      events.push({ d, rec: 0, sp: (m.price || 0) * (m.qty || 1) });
+      events.push({ d, con: 0, rec: 0, sp: (m.price || 0) * (m.qty || 1) });
     });
   });
-  if (!events.length && !totalContract) return '<div class="muted" style="color:#8fa3c0">No payments or material orders recorded yet — the chart will appear once there is activity.</div>';
+  if (!events.length && !totalContract) return '<div class="muted" style="color:#8fa3c0">No jobs with prices, payments or material orders yet — the chart will appear once there is activity.</div>';
   const today = new Date().toISOString().slice(0, 10);
   let dates = [...new Set([...events.map((e) => e.d), today])].sort();
   if (dates.length === 1) dates = [dates[0], today > dates[0] ? today : dates[0]]; // ensure a segment
   let pts = dates.map((d) => {
-    let rec = 0, sp = 0;
-    events.forEach((e) => { if (e.d <= d) { rec += e.rec; sp += e.sp; } });
-    return { t: Date.parse(d), d, rec, sp, out: Math.max(totalContract - rec, 0) };
+    let con = 0, rec = 0, sp = 0;
+    events.forEach((e) => { if (e.d <= d) { con += e.con; rec += e.rec; sp += e.sp; } });
+    return { t: Date.parse(d), d, rec, sp, out: Math.max(con - rec, 0) };
   });
   if (pts.length === 1) pts = [pts[0], { ...pts[0], t: pts[0].t + 86400000 }];
   const W = 760, H = 280, L = 62, R = 16, T = 16, B = 34;
@@ -113,6 +118,7 @@ function financeChartSVG(projects) {
   const X = (t) => L + ((t - t0) / (t1 - t0 || 1)) * (W - L - R);
   const Y = (v) => T + (1 - v / yMax) * (H - T - B);
   const line = (key) => pts.map((p) => `${X(p.t).toFixed(1)},${Y(p[key]).toFixed(1)}`).join(' ');
+  const dots = (key, color) => pts.map((p) => `<circle cx="${X(p.t).toFixed(1)}" cy="${Y(p[key]).toFixed(1)}" r="3.5" fill="${color}" stroke="#0e1e38" stroke-width="1.5"/>`).join('');
   const kfmt = (v) => v >= 1000000 ? '$' + (v / 1000000).toFixed(1) + 'M' : v >= 1000 ? '$' + Math.round(v / 1000) + 'k' : '$' + Math.round(v);
   const dfmt = (t) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const gridY = [0.25, 0.5, 0.75, 1].map((f) => {
@@ -129,6 +135,7 @@ function financeChartSVG(projects) {
       <polyline points="${line('out')}" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="7 6" stroke-linejoin="round"/>
       <polyline points="${line('sp')}" fill="none" stroke="#ff5c5c" stroke-width="2.5" stroke-linejoin="round"/>
       <polyline points="${line('rec')}" fill="none" stroke="#34d17b" stroke-width="2.5" stroke-linejoin="round"/>
+      ${dots('out', '#ffffff')}${dots('sp', '#ff5c5c')}${dots('rec', '#34d17b')}
     </svg>
     <div class="chart-legend">
       <span><span class="sw" style="border-top-style:dashed;border-color:#fff"></span>Receivable (outstanding)</span>
@@ -161,11 +168,12 @@ async function renderHome() {
       <div class="stat"><div class="num">${money(toOrderCost)}</div><div class="lbl">Materials To Order Cost</div></div>` : ''}
     </div>
     ${isAdmin ? `
+    <div class="home-duo">
     <div class="panel chart-panel">
       <h3>Cash Flow — Receivable vs. Spending vs. Received</h3>
       ${financeChartSVG(projects)}
     </div>
-    <div class="panel">
+    <div class="panel todo-panel">
       <h3>To-Do — All Jobs</h3>
       ${(() => {
         const jobs = projects.filter((p) => (p.notes || []).length);
@@ -183,6 +191,7 @@ async function renderHome() {
           </div>`;
         }).join('');
       })()}
+    </div>
     </div>` : ''}
     <div class="panel map-card" id="mapCard">
       <h3>Job Map</h3>

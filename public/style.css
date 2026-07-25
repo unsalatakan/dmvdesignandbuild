@@ -270,3 +270,9 @@ html.light .chart-panel h3 { color: #fff; }
 .todo-job h4 { margin-bottom: 8px; font-size: 15px; }
 .todo-job h4 a { color: var(--gold); text-decoration: none; }
 .todo-job h4 a:hover { text-decoration: underline; }
+
+/* chart + to-do side by side */
+.home-duo { display: grid; grid-template-columns: 3fr 2fr; gap: 20px; align-items: start; }
+.home-duo .panel { margin-bottom: 20px; }
+.todo-panel { max-height: 420px; overflow-y: auto; }
+@media (max-width: 980px) { .home-duo { grid-template-columns: 1fr; gap: 0; } }
