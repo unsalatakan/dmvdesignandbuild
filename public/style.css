@@ -1,6 +1,9 @@
 :root {
-  --black: #17181c;
-  --dark: #1f2127;
+  --black: #0b1526;
+  --dark: #142744;
+  --navy: #0a1628;
+  --navy-mid: #122845;
+  --navy-light: #1a3a63;
   --panel: #ffffff;
   --gold: #c8952d;
   --gold-dark: #a87c22;
@@ -12,7 +15,12 @@
   --radius: 12px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; background: var(--bg); color: var(--text); }
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  background: linear-gradient(160deg, var(--navy) 0%, var(--navy-mid) 55%, var(--navy-light) 100%) fixed;
+  min-height: 100vh;
+  color: var(--text);
+}
 .hidden { display: none !important; }
 
 /* buttons */
@@ -25,7 +33,7 @@ body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-
 .w100 { width: 100%; }
 
 /* login */
-.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, var(--black) 55%, #2c2415); }
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, var(--navy) 0%, var(--navy-mid) 60%, #23345c 100%); }
 .login-card { background: #fff; border-radius: 16px; padding: 40px 36px; width: 360px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.45); }
 .login-logo { width: 170px; margin-bottom: 6px; }
 .login-card h2 { font-size: 18px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 22px; }
@@ -37,10 +45,11 @@ body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-
 .app { display: flex; min-height: 100vh; }
 .topbar { display: none; }
 .nav-back { display: none; }
-.sidebar { width: 230px; background: var(--black); display: flex; flex-direction: column; padding: 22px 16px; position: fixed; top: 0; bottom: 0; z-index: 1000; }
+.sidebar { width: 230px; background: rgba(6,13,26,0.92); backdrop-filter: blur(6px); border-right: 1px solid rgba(200,149,45,0.18); display: flex; flex-direction: column; padding: 22px 16px; position: fixed; top: 0; bottom: 0; z-index: 1000; }
 .side-logo { width: 150px; align-self: center; margin-bottom: 26px; background: #fff; border-radius: 10px; padding: 10px; }
 .sidebar nav a { display: block; color: #cfd2d8; text-decoration: none; padding: 11px 14px; border-radius: 8px; margin-bottom: 4px; font-size: 14.5px; font-weight: 500; }
-.sidebar nav a:hover { background: #262931; }
+.sidebar nav a { transition: background 0.2s, transform 0.2s; }
+.sidebar nav a:hover { background: rgba(255,255,255,0.08); transform: translateX(3px); }
 .sidebar nav a.active { background: var(--gold); color: #fff; }
 .side-bottom { margin-top: auto; }
 .whoami { color: #8a8f9a; font-size: 12.5px; margin-bottom: 10px; text-align: center; }
@@ -48,12 +57,15 @@ body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-
 
 /* headers / cards */
 .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
-.page-head h1 { font-size: 22px; }
+.page-head h1 { font-size: 22px; color: #fff; letter-spacing: 0.3px; text-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.main > .muted { color: #9fb0c8; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 22px; }
-.stat { background: var(--panel); border-radius: var(--radius); padding: 18px 20px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); border-top: 3px solid var(--gold); }
+.stat { background: var(--panel); border-radius: var(--radius); padding: 18px 20px; box-shadow: 0 4px 14px rgba(0,0,0,0.25); border-top: 3px solid var(--gold); transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.stat:hover { transform: translateY(-3px); box-shadow: 0 10px 26px rgba(0,0,0,0.35); }
 .stat .num { font-size: 24px; font-weight: 700; }
 .stat .lbl { font-size: 12.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 3px; }
-.panel { background: var(--panel); border-radius: var(--radius); box-shadow: 0 1px 4px rgba(0,0,0,0.06); padding: 20px; margin-bottom: 20px; }
+.panel { background: var(--panel); border-radius: var(--radius); box-shadow: 0 4px 14px rgba(0,0,0,0.25); padding: 20px; margin-bottom: 20px; transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.panel:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(0,0,0,0.35); }
 .panel h3 { font-size: 15px; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); }
 
 /* home map */
@@ -67,8 +79,8 @@ body { font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-
 
 /* job cards */
 .job-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 16px; }
-.job-card { background: #fff; border-radius: var(--radius); padding: 18px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); cursor: pointer; border-left: 4px solid var(--gold); transition: 0.15s; }
-.job-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.12); }
+.job-card { background: #fff; border-radius: var(--radius); padding: 18px; box-shadow: 0 4px 14px rgba(0,0,0,0.25); cursor: pointer; border-left: 4px solid var(--gold); transition: transform 0.2s ease, box-shadow 0.2s ease; }
+.job-card:hover { transform: translateY(-4px); box-shadow: 0 12px 28px rgba(0,0,0,0.38); }
 .job-card h4 { font-size: 16px; margin-bottom: 6px; }
 .job-card .addr { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
 .job-meta { display: flex; gap: 14px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
@@ -123,9 +135,9 @@ input.f:focus, select.f:focus { outline: 2px solid var(--gold); border-color: tr
   .app { display: block; }
 
   /* top bar with hamburger */
-  .topbar { display: flex; align-items: center; position: fixed; top: 0; left: 0; right: 0; height: 60px; background: #fff; z-index: 1100; padding: 0 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.12); }
-  .menu-btn { background: none; border: none; color: var(--black); font-size: 26px; padding: 8px 10px; cursor: pointer; line-height: 1; }
-  .top-logo { height: 48px; position: absolute; left: 50%; transform: translateX(-50%); }
+  .topbar { display: flex; align-items: center; position: fixed; top: 0; left: 0; right: 0; height: 60px; background: rgba(6,13,26,0.95); border-bottom: 1px solid rgba(200,149,45,0.25); z-index: 1100; padding: 0 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.3); }
+  .menu-btn { background: none; border: none; color: #fff; font-size: 26px; padding: 8px 10px; cursor: pointer; line-height: 1; }
+  .top-logo { height: 44px; position: absolute; left: 50%; transform: translateX(-50%); background: #fff; border-radius: 8px; padding: 4px 8px; }
   .top-spacer { flex: 1; }
 
   /* sidebar becomes a slide-in drawer */
