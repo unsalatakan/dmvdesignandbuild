@@ -203,7 +203,7 @@ html.light .sidebar { background: var(--black); backdrop-filter: none; }
   html.light .topbar { background: rgba(255,255,255,0.88); }
   .menu-btn { background: none; border: none; color: #fff; font-size: 26px; padding: 8px 10px; cursor: pointer; line-height: 1; }
   html.light .menu-btn { color: #17181c; }
-  .top-logo { height: 46px; position: absolute; left: 50%; transform: translateX(-50%); }
+  .top-logo { height: 54px; position: absolute; left: 50%; transform: translateX(-50%); }
 
   /* sidebar becomes a slide-in drawer */
   .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; width: 250px; box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
