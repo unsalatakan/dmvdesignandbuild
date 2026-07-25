@@ -271,7 +271,7 @@ async function renderJob(id) {
       ${(p.photos || []).length ? `
       <div class="photo-grid">
         ${p.photos.map((ph) => `
-        <div class="photo-item" data-view="${ph.file}">
+        <div class="photo-item" data-view="${p.photos.indexOf(ph)}">
           <img src="/api/file/${ph.file}" alt="${esc(ph.name)}" loading="lazy" />
           ${isAdmin ? `<button class="photo-del" data-delphoto="${ph.id}" title="Delete photo">✕</button>` : ''}
         </div>`).join('')}
@@ -354,7 +354,7 @@ async function renderJob(id) {
   document.querySelectorAll('[data-view]').forEach((d) =>
     d.addEventListener('click', (e) => {
       if (e.target.closest('[data-delphoto]')) return;
-      openModal(`<img src="/api/file/${d.dataset.view}" style="width:100%;border-radius:10px;display:block" />`);
+      openLightbox(p.photos || [], Number(d.dataset.view));
     })
   );
 
@@ -510,6 +510,52 @@ async function renderCustomers() {
       renderCustomers();
     })
   );
+}
+
+/* ---------- photo lightbox ---------- */
+function openLightbox(photos, startIdx) {
+  if (!photos.length) return;
+  let idx = startIdx;
+  const single = photos.length === 1;
+  const back = document.createElement('div');
+  back.className = 'lightbox';
+  back.innerHTML = `
+    <button class="lb-btn lb-close" title="Close">✕</button>
+    ${single ? '' : '<button class="lb-btn lb-prev" title="Previous">‹</button><button class="lb-btn lb-next" title="Next">›</button>'}
+    <img class="lb-img" alt="" />
+    <div class="lb-count"></div>`;
+  document.body.appendChild(back);
+  const img = back.querySelector('.lb-img');
+  const count = back.querySelector('.lb-count');
+  const show = (i) => {
+    idx = (i + photos.length) % photos.length;
+    img.src = '/api/file/' + photos[idx].file;
+    count.textContent = single ? '' : (idx + 1) + ' / ' + photos.length;
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') close();
+    else if (e.key === 'ArrowLeft') show(idx - 1);
+    else if (e.key === 'ArrowRight') show(idx + 1);
+  };
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey); };
+  document.addEventListener('keydown', onKey);
+  back.querySelector('.lb-close').addEventListener('click', close);
+  if (!single) {
+    back.querySelector('.lb-prev').addEventListener('click', () => show(idx - 1));
+    back.querySelector('.lb-next').addEventListener('click', () => show(idx + 1));
+  }
+  back.addEventListener('click', (e) => { if (e.target === back) close(); });
+  // swipe to change photo (mobile)
+  let sx = null;
+  back.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+  back.addEventListener('touchend', (e) => {
+    if (sx === null || single) { sx = null; return; }
+    const dx = e.changedTouches[0].clientX - sx;
+    if (dx > 40) show(idx - 1);
+    else if (dx < -40) show(idx + 1);
+    sx = null;
+  }, { passive: true });
+  show(idx);
 }
 
 /* ---------- modal helpers ---------- */

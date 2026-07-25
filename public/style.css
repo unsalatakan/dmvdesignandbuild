@@ -135,6 +135,16 @@ input.f:focus, select.f:focus { outline: 2px solid var(--gold); border-color: tr
 .photo-del { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.55); color: #fff; border: none; border-radius: 50%; width: 26px; height: 26px; cursor: pointer; font-size: 13px; line-height: 1; }
 .photo-del:hover { background: var(--red); }
 
+/* lightbox */
+.lightbox { position: fixed; inset: 0; background: rgba(4,8,15,0.94); z-index: 3000; display: flex; align-items: center; justify-content: center; }
+.lb-img { max-width: 92vw; max-height: 84vh; border-radius: 8px; box-shadow: 0 12px 44px rgba(0,0,0,0.6); }
+.lb-btn { position: fixed; background: rgba(255,255,255,0.14); color: #fff; border: none; border-radius: 50%; width: 46px; height: 46px; font-size: 26px; line-height: 1; cursor: pointer; z-index: 3100; transition: background 0.15s; }
+.lb-btn:hover { background: rgba(255,255,255,0.3); }
+.lb-close { top: 16px; right: 16px; font-size: 18px; }
+.lb-prev { left: 12px; top: 50%; transform: translateY(-50%); }
+.lb-next { right: 12px; top: 50%; transform: translateY(-50%); }
+.lb-count { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); color: #d6dce6; font-size: 13.5px; letter-spacing: 1px; }
+
 /* file chips */
 .file-chip { display: inline-flex; align-items: center; gap: 8px; background: #eaf6ef; border: 1px solid #c6e5d3; color: var(--gold-dark); font-weight: 600; font-size: 13.5px; padding: 8px 14px; border-radius: 8px; text-decoration: none; margin-right: 10px; margin-bottom: 8px; }
 .file-chip:hover { background: #ddf0e6; }
