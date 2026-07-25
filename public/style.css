@@ -41,24 +41,23 @@ body {
 .login-card input:focus { outline: 2px solid var(--gold); border-color: transparent; }
 .error { color: var(--red); font-size: 13px; margin-top: 10px; min-height: 16px; }
 
-/* shell — top bar + slide-in menu on all screen sizes */
-.app { min-height: 100vh; }
-.topbar { display: flex; align-items: center; position: fixed; top: 0; left: 0; right: 0; height: 60px; background: #fff; z-index: 1100; padding: 0 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.25); }
-.menu-btn { background: none; border: none; color: #17181c; font-size: 26px; padding: 8px 10px; cursor: pointer; line-height: 1; }
-.top-logo { height: 48px; position: absolute; left: 50%; transform: translateX(-50%); }
-.top-spacer { flex: 1; }
+/* shell — fixed sidebar on desktop, drawer + top bar on mobile */
+.app { display: flex; min-height: 100vh; }
+.topbar { display: none; }
 .nav-back { display: none; }
-.nav-back.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 900; }
-.sidebar { width: 250px; background: rgba(6,13,26,0.97); border-right: 1px solid rgba(29,157,92,0.25); display: flex; flex-direction: column; padding: 0 16px 22px; position: fixed; top: 0; bottom: 0; z-index: 1000; transform: translateX(-100%); transition: transform 0.25s ease; box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
-.sidebar.open { transform: translateX(0); }
-.side-logo { display: block; width: calc(100% + 32px); margin: 0 -16px 18px; background: #fff; padding: 74px 40px 20px; }
+/* theme-aware logos */
+html:not(.light) .logo-light { display: none; }
+html.light .logo-dark { display: none; }
+.sidebar { width: 230px; background: rgba(6,13,26,0.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-right: 1px solid rgba(29,157,92,0.25); display: flex; flex-direction: column; padding: 0 16px 22px; position: fixed; top: 0; bottom: 0; z-index: 1000; }
+.side-logo { display: block; width: calc(100% + 32px); margin: 0 -16px 18px; background: #fff; padding: 18px 40px 20px; }
+html:not(.light) .side-logo { background: transparent; width: 165px; margin: 26px auto 20px; padding: 0; }
 .sidebar nav a { display: block; color: #cfd2d8; text-decoration: none; padding: 11px 14px; border-radius: 8px; margin-bottom: 4px; font-size: 14.5px; font-weight: 500; }
 .sidebar nav a { transition: background 0.2s, transform 0.2s; }
 .sidebar nav a:hover { background: rgba(255,255,255,0.08); transform: translateX(3px); }
 .sidebar nav a.active { background: var(--gold); color: #fff; }
 .side-bottom { margin-top: auto; }
 .whoami { color: #8a8f9a; font-size: 12.5px; margin-bottom: 10px; text-align: center; }
-.main { padding: 88px 32px 28px; }
+.main { margin-left: 230px; flex: 1; padding: 28px 32px; }
 
 /* headers / cards */
 .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
@@ -197,9 +196,24 @@ html.light .sidebar { background: var(--black); backdrop-filter: none; }
 
 /* ---------- mobile ---------- */
 @media (max-width: 800px) {
+  .app { display: block; }
+
+  /* top bar with hamburger — blurry dark, white in light mode */
+  .topbar { display: flex; align-items: center; position: fixed; top: 0; left: 0; right: 0; height: 60px; background: rgba(6,13,26,0.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); z-index: 1100; padding: 0 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.25); }
+  html.light .topbar { background: rgba(255,255,255,0.88); }
+  .menu-btn { background: none; border: none; color: #fff; font-size: 26px; padding: 8px 10px; cursor: pointer; line-height: 1; }
+  html.light .menu-btn { color: #17181c; }
+  .top-logo { height: 46px; position: absolute; left: 50%; transform: translateX(-50%); }
+
+  /* sidebar becomes a slide-in drawer */
+  .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; width: 250px; box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
+  .sidebar.open { transform: translateX(0); }
+  .nav-back.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 900; }
+  .side-logo { padding-top: 74px; } /* white band continues up behind the top bar (light mode) */
+  html:not(.light) .side-logo { padding-top: 0; margin-top: 82px; } /* dark logo clears the top bar */
   .sidebar nav a { padding: 14px; font-size: 16px; }
 
-  .main { padding: 70px 14px 24px; }
+  .main { margin-left: 0; padding: 70px 14px 24px; }
 
   /* headers & cards */
   .page-head { flex-wrap: wrap; gap: 10px; }
