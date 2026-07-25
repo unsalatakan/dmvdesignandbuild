@@ -45,8 +45,8 @@ body {
 .app { display: flex; min-height: 100vh; }
 .topbar { display: none; }
 .nav-back { display: none; }
-.sidebar { width: 230px; background: rgba(6,13,26,0.92); backdrop-filter: blur(6px); border-right: 1px solid rgba(29,157,92,0.25); display: flex; flex-direction: column; padding: 22px 16px; position: fixed; top: 0; bottom: 0; z-index: 1000; }
-.side-logo { width: 150px; align-self: center; margin-bottom: 26px; background: #fff; border-radius: 10px; padding: 10px; }
+.sidebar { width: 230px; background: rgba(6,13,26,0.92); backdrop-filter: blur(6px); border-right: 1px solid rgba(29,157,92,0.25); display: flex; flex-direction: column; padding: 0 16px 22px; position: fixed; top: 0; bottom: 0; z-index: 1000; }
+.side-logo { display: block; width: calc(100% + 32px); margin: 0 -16px 18px; background: #fff; padding: 18px 40px 20px; }
 .sidebar nav a { display: block; color: #cfd2d8; text-decoration: none; padding: 11px 14px; border-radius: 8px; margin-bottom: 4px; font-size: 14.5px; font-weight: 500; }
 .sidebar nav a { transition: background 0.2s, transform 0.2s; }
 .sidebar nav a:hover { background: rgba(255,255,255,0.08); transform: translateX(3px); }
@@ -201,7 +201,8 @@ html.light .sidebar { background: var(--black); backdrop-filter: none; }
   .top-spacer { flex: 1; }
 
   /* sidebar becomes a slide-in drawer */
-  .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; width: 250px; padding-top: 68px; box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
+  .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; width: 250px; box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
+  .side-logo { padding-top: 74px; } /* white area continues up behind the top bar */
   .sidebar.open { transform: translateX(0); }
   .nav-back.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 900; }
   .sidebar nav a { padding: 14px; font-size: 16px; }
