@@ -10,6 +10,7 @@
 <meta name="theme-color" content="#17181c" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="style.css" />
+<script>if (localStorage.getItem('theme') === 'light') document.documentElement.classList.add('light');</script>
 </head>
 <body>
 
@@ -40,6 +41,7 @@
     <nav id="navLinks"></nav>
     <div class="side-bottom">
       <div id="whoami" class="whoami"></div>
+      <button id="themeBtn" class="btn ghost w100" style="margin-bottom:8px"></button>
       <button id="logoutBtn" class="btn ghost w100">Log out</button>
     </div>
   </aside>

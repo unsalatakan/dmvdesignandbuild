@@ -48,6 +48,17 @@ $('#loginForm').addEventListener('submit', async (e) => {
 });
 $('#logoutBtn').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.hash = ''; location.reload(); });
 
+/* ---------- theme toggle ---------- */
+function paintThemeBtn() {
+  $('#themeBtn').textContent = document.documentElement.classList.contains('light') ? '🌙 Dark Mode' : '☀️ Light Mode';
+}
+$('#themeBtn').addEventListener('click', () => {
+  const light = document.documentElement.classList.toggle('light');
+  localStorage.setItem('theme', light ? 'light' : 'dark');
+  paintThemeBtn();
+});
+paintThemeBtn();
+
 /* ---------- mobile menu ---------- */
 function closeMenu() { $('#sidebar').classList.remove('open'); $('#navBack').classList.remove('show'); }
 $('#menuBtn').addEventListener('click', () => {

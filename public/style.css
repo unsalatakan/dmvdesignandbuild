@@ -130,6 +130,15 @@ input.f:focus, select.f:focus { outline: 2px solid var(--gold); border-color: tr
 .info-grid .k { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.5px; }
 .info-grid .v { font-size: 15px; font-weight: 600; margin-top: 3px; }
 
+/* ---------- light mode ---------- */
+html.light body { background: linear-gradient(160deg, #f5f7fb 0%, #eaeef6 55%, #dfe6f2 100%) fixed; }
+html.light .page-head h1 { color: var(--text); text-shadow: none; }
+html.light .main > .muted { color: var(--muted); }
+html.light .stat, html.light .panel, html.light .job-card { box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+html.light .stat:hover, html.light .panel:hover { box-shadow: 0 8px 20px rgba(0,0,0,0.13); }
+html.light .job-card:hover { box-shadow: 0 10px 24px rgba(0,0,0,0.15); }
+html.light .sidebar { background: var(--black); backdrop-filter: none; }
+
 /* ---------- mobile ---------- */
 @media (max-width: 800px) {
   .app { display: block; }
