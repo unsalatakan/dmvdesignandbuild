@@ -33,7 +33,7 @@ function showApp() {
   $('#appView').classList.remove('hidden');
   $('#whoami').textContent = ME.name + (ME.role === 'admin' ? ' (Admin)' : '');
   const links = [['#/home', 'Home'], ['#/jobs', ME.role === 'admin' ? 'Jobs' : 'My Jobs']];
-  if (ME.role === 'admin') links.push(['#/customers', 'Customers']);
+  if (ME.role === 'admin') links.push(['#/orders', 'Orders'], ['#/customers', 'Customers']);
   $('#navLinks').innerHTML = links.map(([h, t]) => `<a href="${h}" data-h="${h}">${t}</a>`).join('');
   if (!location.hash || location.hash === '#/') location.hash = '#/home';
   route();
@@ -79,6 +79,7 @@ function route() {
   const jobMatch = h.match(/^#\/job\/(\d+)/);
   if (jobMatch) return renderJob(Number(jobMatch[1]));
   if (h.startsWith('#/jobs')) return renderJobs();
+  if (h.startsWith('#/orders') && ME.role === 'admin') return renderOrders();
   if (h.startsWith('#/customers') && ME.role === 'admin') return renderCustomers();
   renderHome();
 }
@@ -303,6 +304,55 @@ async function renderJobs() {
   if (isAdmin) $('#newProjBtn').addEventListener('click', () => projectModal());
 }
 
+/* ---------- ORDERS (admin) ---------- */
+async function renderOrders() {
+  const projects = await api('/api/projects');
+  const jobs = projects
+    .map((p) => ({ ...p, open: (p.materials || []).filter((m) => !m.ordered) }))
+    .filter((p) => (p.materials || []).length);
+  const totalOpen = jobs.reduce((s, p) => s + p.open.length, 0);
+  const totalCost = jobs.reduce((s, p) => s + p.open.reduce((a, m) => a + (m.price || 0) * (m.qty || 1), 0), 0);
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>Orders</h1>
+      <div class="muted">${totalOpen} item${totalOpen === 1 ? '' : 's'} to order — ${money(totalCost)}</div>
+    </div>
+    ${jobs.length ? `<div class="order-grid">
+      ${jobs.map((p) => {
+        const cost = p.open.reduce((a, m) => a + (m.price || 0) * (m.qty || 1), 0);
+        const cats = [...new Set(p.open.map((m) => m.category || 'Other'))];
+        return `
+        <div class="panel order-block">
+          <h3><a href="#/job/${p.id}">${esc(p.name)}</a></h3>
+          <div class="muted" style="margin-bottom:10px">${p.open.length ? `${cats.length} order${cats.length === 1 ? '' : 's'} (${cats.map(esc).join(', ')}) — ${p.open.length} item${p.open.length === 1 ? '' : 's'} — <b style="color:var(--red)">${money(cost)}</b>` : '✓ All materials ordered'}</div>
+          ${p.open.length ? `
+          <table>
+            <thead><tr><th style="width:36px"></th><th>Material</th><th class="right">Qty</th><th class="right">Cost</th><th>Link</th></tr></thead>
+            <tbody>
+              ${cats.map((c) => `
+              <tr class="totals-row"><td colspan="5">📦 ${esc(c)}</td></tr>
+              ${p.open.filter((m) => (m.category || 'Other') === c).map((m) => `
+              <tr>
+                <td><input type="checkbox" data-omid="${p.id}:${m.id}" style="width:17px;height:17px;accent-color:var(--gold)" /></td>
+                <td>${esc(m.name)}</td>
+                <td class="right">${m.qty || 1}${m.unit ? ' ' + esc(m.unit) : ''}</td>
+                <td class="right">${money((m.price || 0) * (m.qty || 1))}</td>
+                <td>${m.link ? `<a href="${esc(m.link)}" target="_blank" rel="noopener">Buy ↗</a>` : '<span class="muted">—</span>'}</td>
+              </tr>`).join('')}`).join('')}
+            </tbody>
+          </table>` : ''}
+        </div>`;
+      }).join('')}
+    </div>` : '<div class="panel muted">No material lists uploaded yet. Upload a takeoff Excel on a job page and its items to order will show up here.</div>'}`;
+  document.querySelectorAll('input[data-omid]').forEach((cb) =>
+    cb.addEventListener('change', async () => {
+      const [pid, mid] = cb.dataset.omid.split(':');
+      await api(`/api/projects/${pid}/materials/${mid}`, { method: 'PUT', json: { ordered: cb.checked } });
+      renderOrders();
+    })
+  );
+}
+
 /* ---------- PROJECT CREATE / EDIT MODAL ---------- */
 async function projectModal(p) {
   const customers = await api('/api/customers');
@@ -389,6 +439,12 @@ async function renderJob(id) {
       </div>
       ${!p.lat && isAdmin ? '<div class="muted" style="margin-top:10px">⚠️ Address could not be located on the map. Edit the project and refine the address.</div>' : ''}
     </div>
+
+    ${p.lat && p.lng ? `
+    <div class="panel">
+      <h3>Location</h3>
+      <div id="jobmap"></div>
+    </div>` : ''}
 
     <div class="panel">
       <h3>Photos${(p.photos || []).length ? ' (' + p.photos.length + ')' : ''}</h3>
@@ -488,6 +544,9 @@ async function renderJob(id) {
         <button class="btn gold" id="noteAddBtn">Add</button>
       </div>
     </div>` : ''}`;
+
+  // job location map (all users)
+  if (p.lat && p.lng) drawMap('jobmap', [p], true);
 
   // photo viewer (all users)
   document.querySelectorAll('[data-view]').forEach((d) =>
