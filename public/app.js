@@ -106,7 +106,7 @@ async function renderHome() {
 function drawMap(elId, projects, interactivePopups) {
   const located = projects.filter((p) => p.lat && p.lng);
   const map = L.map(elId, { scrollWheelZoom: interactivePopups });
-  L.tileLayer('https://{s}.google.com/vt/lyrs=m,traffic&x={x}&y={y}&z={z}', {
+  L.tileLayer('https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
     subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
     attribution: '&copy; Google Maps'
   }).addTo(map);
