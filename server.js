@@ -9,8 +9,11 @@ const path = require('path');
 const zlib = require('zlib');
 
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'data', 'db.json');
-const UPLOAD_DIR = path.join(__dirname, 'uploads');
+/* Persistent storage: on Railway, attach a Volume — its mount path is provided
+ * automatically via RAILWAY_VOLUME_MOUNT_PATH so data survives deploys. */
+const STORAGE_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
+const DATA_FILE = path.join(STORAGE_DIR, 'data', 'db.json');
+const UPLOAD_DIR = path.join(STORAGE_DIR, 'uploads');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
