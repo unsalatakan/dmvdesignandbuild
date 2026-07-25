@@ -206,20 +206,20 @@ html.light .whoami { color: #7a7f8a; }
   .app { display: block; }
 
   /* top bar with hamburger — blurry dark, white in light mode */
-  .topbar { display: flex; align-items: center; position: fixed; top: 0; left: 0; right: 0; height: 72px; background: rgba(6,13,26,0.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); z-index: 1100; padding: 0 12px; box-shadow: 0 1px 6px rgba(0,0,0,0.25); }
+  .topbar { display: flex; align-items: center; position: fixed; top: 0; left: 0; right: 0; height: calc(72px + env(safe-area-inset-top)); background: rgba(6,13,26,0.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); z-index: 1100; padding: env(safe-area-inset-top) 12px 0; box-shadow: 0 1px 6px rgba(0,0,0,0.25); }
   html.light .topbar { background: rgba(255,255,255,0.88); }
   .menu-btn { background: none; border: none; color: #fff; font-size: 26px; padding: 8px 10px; cursor: pointer; line-height: 1; }
   html.light .menu-btn { color: #17181c; }
-  .top-logo { height: 64px; position: absolute; left: 50%; transform: translateX(-50%); }
+  .top-logo { height: 64px; position: absolute; left: 50%; top: calc(4px + env(safe-area-inset-top)); transform: translateX(-50%); }
 
   /* sidebar becomes a slide-in drawer */
-  .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; width: 250px; padding-top: 86px; box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
+  .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; width: 250px; padding-top: calc(86px + env(safe-area-inset-top)); box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
   .sidebar.open { transform: translateX(0); }
   .nav-back.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 900; }
   .side-logo { display: none; } /* top bar already shows the logo on mobile */
   .sidebar nav a { padding: 14px; font-size: 16px; }
 
-  .main { margin-left: 0; padding: 84px 14px 24px; }
+  .main { margin-left: 0; padding: calc(88px + env(safe-area-inset-top)) 14px 24px; }
 
   /* headers & cards */
   .page-head { flex-wrap: wrap; gap: 10px; }

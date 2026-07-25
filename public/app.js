@@ -96,7 +96,7 @@ async function renderHome() {
     .sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)))
     .slice(0, 8);
   $('#main').innerHTML = `
-    <div class="page-head"><h1>Welcome, ${esc(ME.name)}</h1></div>
+    <div class="page-head"><h1>${isAdmin ? 'Dashboard' : 'Welcome, ' + esc(ME.name)}</h1></div>
     <div class="cards">
       <div class="stat"><div class="num">${projects.length}</div><div class="lbl">${isAdmin ? 'Active Jobs' : 'My Jobs'}</div></div>
       ${isAdmin ? `
