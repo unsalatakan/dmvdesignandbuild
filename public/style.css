@@ -68,6 +68,12 @@ body {
 .panel:hover { transform: translateY(-2px); box-shadow: 0 10px 26px rgba(0,0,0,0.35); }
 .panel h3 { font-size: 15px; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); }
 
+/* critical Leaflet layout rules — fallback in case the CDN stylesheet fails to load */
+.leaflet-pane, .leaflet-tile, .leaflet-marker-icon, .leaflet-marker-shadow, .leaflet-tile-container,
+.leaflet-pane > svg, .leaflet-pane > canvas, .leaflet-zoom-box, .leaflet-image-layer, .leaflet-layer { position: absolute; left: 0; top: 0; }
+.leaflet-container { overflow: hidden; }
+.leaflet-container .leaflet-tile { max-width: none !important; max-height: none !important; width: auto; padding: 0; }
+
 /* home map */
 .map-card { position: relative; cursor: pointer; }
 #homemap { height: 380px; border-radius: 8px; z-index: 1; }
