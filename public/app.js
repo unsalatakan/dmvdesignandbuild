@@ -88,6 +88,10 @@ async function renderHome() {
   const isAdmin = ME.role === 'admin';
   const received = isAdmin ? projects.reduce((s, p) => s + (p.payments || []).reduce((a, x) => a + (x.amount || 0), 0), 0) : null;
   const toOrder = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).length, 0) : null;
+  const recentPhotos = projects
+    .flatMap((p) => (p.photos || []).map((ph) => ({ ...ph, projectName: p.name, projectId: p.id })))
+    .sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)))
+    .slice(0, 8);
   $('#main').innerHTML = `
     <div class="page-head"><h1>Welcome, ${esc(ME.name)}</h1></div>
     <div class="cards">
@@ -102,10 +106,27 @@ async function renderHome() {
       <h3>Job Map</h3>
       <div class="map-hint">Click map to expand ⛶</div>
       <div id="homemap"></div>
-    </div>`;
+    </div>
+    ${recentPhotos.length ? `
+    <div class="panel">
+      <h3>Latest Photos</h3>
+      <div class="photo-grid">
+        ${recentPhotos.map((ph, i) => `
+        <div class="photo-item" data-rview="${i}">
+          <img src="/api/file/${ph.file}" alt="${esc(ph.name)}" loading="lazy" />
+          <a class="photo-tag" href="#/job/${ph.projectId}" onclick="event.stopPropagation()">${esc(ph.projectName)}</a>
+        </div>`).join('')}
+      </div>
+    </div>` : ''}`;
   homeMap = drawMap('homemap', projects, false);
   setTimeout(() => homeMap.invalidateSize(), 120);
   $('#mapCard').addEventListener('click', () => openFullMap(projects));
+  document.querySelectorAll('[data-rview]').forEach((d) =>
+    d.addEventListener('click', (e) => {
+      if (e.target.closest('.photo-tag')) return;
+      openLightbox(recentPhotos, Number(d.dataset.rview));
+    })
+  );
 }
 
 function drawMap(elId, projects, interactivePopups) {
