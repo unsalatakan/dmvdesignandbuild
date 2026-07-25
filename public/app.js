@@ -33,7 +33,9 @@ function showApp() {
   $('#appView').classList.remove('hidden');
   $('#whoami').textContent = ME.name + (ME.role === 'admin' ? ' (Admin)' : '');
   const links = [['#/home', 'Home'], ['#/jobs', ME.role === 'admin' ? 'Jobs' : 'My Jobs']];
-  if (ME.role === 'admin') links.push(['#/orders', 'Orders'], ['#/customers', 'Customers']);
+  if (ME.role === 'admin') links.push(['#/orders', 'Orders']);
+  links.push(['#/photos', 'Photos']);
+  if (ME.role === 'admin') links.push(['#/customers', 'Customers']);
   $('#navLinks').innerHTML = links.map(([h, t]) => `<a href="${h}" data-h="${h}">${t}</a>`).join('');
   if (!location.hash || location.hash === '#/') location.hash = '#/home';
   route();
@@ -80,6 +82,7 @@ function route() {
   if (jobMatch) return renderJob(Number(jobMatch[1]));
   if (h.startsWith('#/jobs')) return renderJobs();
   if (h.startsWith('#/orders') && ME.role === 'admin') return renderOrders();
+  if (h.startsWith('#/photos')) return renderPhotos();
   if (h.startsWith('#/customers') && ME.role === 'admin') return renderCustomers();
   renderHome();
 }
@@ -350,6 +353,33 @@ async function renderOrders() {
       await api(`/api/projects/${pid}/materials/${mid}`, { method: 'PUT', json: { ordered: cb.checked } });
       renderOrders();
     })
+  );
+}
+
+/* ---------- PHOTOS (all users) ---------- */
+async function renderPhotos() {
+  const projects = await api('/api/projects');
+  const jobs = projects
+    .map((p) => ({ ...p, photos: (p.photos || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded))) }))
+    .filter((p) => p.photos.length);
+  const total = jobs.reduce((s, p) => s + p.photos.length, 0);
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>Photos</h1>
+      <div class="muted">${total} photo${total === 1 ? '' : 's'} across ${jobs.length} job${jobs.length === 1 ? '' : 's'}</div>
+    </div>
+    ${jobs.length ? jobs.map((p, ji) => `
+    <div class="panel">
+      <h3><a class="photo-job-link" href="#/job/${p.id}">${esc(p.name)}</a> <span class="muted">— ${p.photos.length} photo${p.photos.length === 1 ? '' : 's'}</span></h3>
+      <div class="photo-grid">
+        ${p.photos.map((ph, i) => `
+        <div class="photo-item" data-pj="${ji}" data-pi="${i}">
+          <img src="/api/file/${ph.file}" alt="${esc(ph.name)}" loading="lazy" />
+        </div>`).join('')}
+      </div>
+    </div>`).join('') : '<div class="panel muted">No photos yet. Upload photos on a job page and they will show up here.</div>'}`;
+  document.querySelectorAll('[data-pj]').forEach((d) =>
+    d.addEventListener('click', () => openLightbox(jobs[Number(d.dataset.pj)].photos, Number(d.dataset.pi)))
   );
 }
 

@@ -295,3 +295,7 @@ html.light .chart-panel h3 { color: var(--muted); }
 
 /* job page location map */
 #jobmap { height: 300px; border-radius: 8px; z-index: 1; }
+
+/* photos page */
+.photo-job-link { color: inherit; text-decoration: none; }
+.photo-job-link:hover { color: var(--gold); }
