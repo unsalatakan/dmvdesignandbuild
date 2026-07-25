@@ -103,7 +103,7 @@ function financeChartSVG(projects) {
       events.push({ d, con: 0, rec: 0, sp: (m.price || 0) * (m.qty || 1) });
     });
   });
-  if (!events.length && !totalContract) return '<div class="muted" style="color:#8fa3c0">No jobs with prices, payments or material orders yet — the chart will appear once there is activity.</div>';
+  if (!events.length && !totalContract) return '<div class="muted" style="color:var(--ch-label)">No jobs with prices, payments or material orders yet — the chart will appear once there is activity.</div>';
   const today = new Date().toISOString().slice(0, 10);
   let dates = [...new Set([...events.map((e) => e.d), today])].sort();
   if (dates.length === 1) dates = [dates[0], today > dates[0] ? today : dates[0]]; // ensure a segment
@@ -119,27 +119,27 @@ function financeChartSVG(projects) {
   const X = (t) => L + ((t - t0) / (t1 - t0 || 1)) * (W - L - R);
   const Y = (v) => T + (1 - v / yMax) * (H - T - B);
   const line = (key) => pts.map((p) => `${X(p.t).toFixed(1)},${Y(p[key]).toFixed(1)}`).join(' ');
-  const dots = (key, color) => pts.map((p) => `<circle cx="${X(p.t).toFixed(1)}" cy="${Y(p[key]).toFixed(1)}" r="3.5" fill="${color}" stroke="#0e1e38" stroke-width="1.5"/>`).join('');
+  const dots = (key, color) => pts.map((p) => `<circle cx="${X(p.t).toFixed(1)}" cy="${Y(p[key]).toFixed(1)}" r="3.5" style="fill:${color};stroke:var(--ch-dotring)" stroke-width="1.5"/>`).join('');
   const kfmt = (v) => v >= 1000000 ? '$' + (v / 1000000).toFixed(1) + 'M' : v >= 1000 ? '$' + Math.round(v / 1000) + 'k' : '$' + Math.round(v);
   const dfmt = (t) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const gridY = [0.25, 0.5, 0.75, 1].map((f) => {
     const v = yMax * f, y = Y(v).toFixed(1);
-    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" stroke="rgba(255,255,255,0.10)"/><text x="${L - 8}" y="${Number(y) + 4}" text-anchor="end" fill="rgba(255,255,255,0.55)" font-size="11">${kfmt(v)}</text>`;
+    return `<line x1="${L}" y1="${y}" x2="${W - R}" y2="${y}" style="stroke:var(--ch-grid)"/><text x="${L - 8}" y="${Number(y) + 4}" text-anchor="end" style="fill:var(--ch-label)" font-size="11">${kfmt(v)}</text>`;
   }).join('');
   const xLabels = [pts[0], pts[Math.floor(pts.length / 2)], pts[pts.length - 1]]
     .filter((p, i, a) => a.findIndex((x) => x.t === p.t) === i)
-    .map((p) => `<text x="${X(p.t).toFixed(1)}" y="${H - 10}" text-anchor="middle" fill="rgba(255,255,255,0.55)" font-size="11">${dfmt(p.t)}</text>`).join('');
+    .map((p) => `<text x="${X(p.t).toFixed(1)}" y="${H - 10}" text-anchor="middle" style="fill:var(--ch-label)" font-size="11">${dfmt(p.t)}</text>`).join('');
   return `
     <svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
       ${gridY}${xLabels}
-      <line x1="${L}" y1="${Y(0)}" x2="${W - R}" y2="${Y(0)}" stroke="rgba(255,255,255,0.25)"/>
-      <polyline points="${line('out')}" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-dasharray="7 6" stroke-linejoin="round"/>
+      <line x1="${L}" y1="${Y(0)}" x2="${W - R}" y2="${Y(0)}" style="stroke:var(--ch-axis)"/>
+      <polyline points="${line('out')}" fill="none" style="stroke:var(--ch-ink)" stroke-width="2.5" stroke-dasharray="7 6" stroke-linejoin="round"/>
       <polyline points="${line('sp')}" fill="none" stroke="#ff5c5c" stroke-width="2.5" stroke-linejoin="round"/>
       <polyline points="${line('rec')}" fill="none" stroke="#34d17b" stroke-width="2.5" stroke-linejoin="round"/>
-      ${dots('out', '#ffffff')}${dots('sp', '#ff5c5c')}${dots('rec', '#34d17b')}
+      ${dots('out', 'var(--ch-ink)')}${dots('sp', '#ff5c5c')}${dots('rec', '#34d17b')}
     </svg>
     <div class="chart-legend">
-      <span><span class="sw" style="border-top-style:dashed;border-color:#fff"></span>Receivable (outstanding)</span>
+      <span><span class="sw" style="border-top-style:dashed;border-color:var(--ch-ink)"></span>Receivable (outstanding)</span>
       <span><span class="sw" style="border-color:#ff5c5c"></span>Material spending</span>
       <span><span class="sw" style="border-color:#34d17b"></span>Money received</span>
     </div>`;
