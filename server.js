@@ -152,11 +152,32 @@ function parseXlsx(buf) {
       shared.push(xmlDecode(ts.map((t) => t.replace(/<t[^>]*>|<\/t>/g, '')).join('')));
     }
   }
-  // first worksheet: find via workbook order, fallback to sheet1
-  let sheetPath = 'xl/worksheets/sheet1.xml';
-  if (!files[sheetPath]) {
-    const cand = Object.keys(files).find((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k));
-    if (cand) sheetPath = cand;
+  // worksheet list with names (workbook.xml + its rels), so we can prefer a "Summary" tab
+  const sheetsByName = []; // { name, path } in workbook order
+  if (files['xl/workbook.xml'] && files['xl/_rels/workbook.xml.rels']) {
+    const wbRels = {};
+    for (const rel of files['xl/_rels/workbook.xml.rels'].toString().match(/<Relationship [^>]*\/>/g) || []) {
+      const id = /Id="([^"]+)"/.exec(rel);
+      const target = /Target="([^"]+)"/.exec(rel);
+      if (id && target) wbRels[id[1]] = 'xl/' + target[1].replace(/^\//, '').replace(/^xl\//, '');
+    }
+    for (const sh of files['xl/workbook.xml'].toString().match(/<sheet [^>]*\/>/g) || []) {
+      const name = /name="([^"]+)"/.exec(sh);
+      const rid = /r:id="([^"]+)"/.exec(sh);
+      if (name && rid && wbRels[rid[1]] && files[wbRels[rid[1]]]) sheetsByName.push({ name: xmlDecode(name[1]), path: wbRels[rid[1]] });
+    }
+  }
+  // prefer a sheet named "Summary" (our material takeoff template), else the first sheet
+  let sheetPath = null;
+  const summarySheet = sheetsByName.find((s) => /summary|material list|order/i.test(s.name));
+  if (summarySheet) sheetPath = summarySheet.path;
+  else if (sheetsByName.length) sheetPath = sheetsByName[0].path;
+  if (!sheetPath || !files[sheetPath]) {
+    sheetPath = 'xl/worksheets/sheet1.xml';
+    if (!files[sheetPath]) {
+      const cand = Object.keys(files).find((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k));
+      if (cand) sheetPath = cand;
+    }
   }
   if (!files[sheetPath]) throw new Error('No worksheet found in file');
   const sheet = files[sheetPath].toString();
@@ -230,11 +251,69 @@ function parsePrice(v) {
   return isNaN(n) ? 0 : n;
 }
 const looksLikeLink = (s) => /^https?:\/\//i.test(String(s).trim()) || /^www\./i.test(String(s).trim());
+function rowLink(r, links, i, preferCol) {
+  let link = preferCol !== -1 && preferCol !== undefined ? String(r[preferCol] || '').trim() : '';
+  if (links[i] && !looksLikeLink(link)) {
+    const hl = preferCol !== -1 && links[i][preferCol] ? links[i][preferCol] : Object.values(links[i]).find(Boolean);
+    if (hl) link = hl;
+  }
+  if (!looksLikeLink(link)) { const found = r.find((c) => looksLikeLink(c)); link = found ? String(found).trim() : ''; }
+  if (link && /^www\./i.test(link)) link = 'https://' + link;
+  return looksLikeLink(link) ? link : '';
+}
+
+/* Material-takeoff template (Summary tab): Category | Item | Quantity | Unit | Unit Cost | Total Cost | Supplier Link.
+ * Subtotal rows (no unit/total cost) and the grand-total row are skipped. */
+function extractTakeoff(keep, links) {
+  let headerAt = -1, H = null;
+  for (let k = 0; k < Math.min(keep.length, 15); k++) {
+    const heads = keep[k].r.map((c) => String(c).trim().toLowerCase());
+    const has = (fn) => heads.findIndex(fn);
+    const cat = has((h) => h === 'category');
+    const item = has((h) => h === 'item' || h === 'material' || h === 'description');
+    const qty = has((h) => h.startsWith('quantity') || h === 'qty' || h.startsWith('qty'));
+    if (cat !== -1 && item !== -1 && qty !== -1) {
+      H = {
+        cat, item, qty,
+        unit: has((h) => h === 'unit' || h === 'uom'),
+        price: has((h) => h.startsWith('unit cost') || h.startsWith('unit price')),
+        total: has((h) => h.startsWith('total cost') || h.startsWith('total price')),
+        link: has((h) => h.includes('link') || h.includes('supplier')),
+      };
+      headerAt = k;
+      break;
+    }
+  }
+  if (!H) return null;
+  const materials = [];
+  for (const { r, i } of keep.slice(headerAt + 1)) {
+    const name = String(r[H.item] || '').trim();
+    const allText = r.map((c) => String(c)).join(' ');
+    if (/grand total/i.test(allText)) continue;         // grand-total row
+    if (!name) continue;                                 // notes / spacer rows
+    const price = H.price !== -1 ? parsePrice(r[H.price]) : 0;
+    const totalCost = H.total !== -1 ? parsePrice(r[H.total]) : 0;
+    if (!price && !totalCost) continue;                  // subtotal / info-only row: nothing to order
+    const qty = parsePrice(r[H.qty]) || 1;
+    materials.push({
+      category: H.cat !== -1 ? String(r[H.cat] || '').trim() || 'Other' : 'Other',
+      name,
+      unit: H.unit !== -1 ? String(r[H.unit] || '').trim() : '',
+      qty,
+      price: price || (qty ? totalCost / qty : totalCost),
+      link: rowLink(r, links, i, H.link),
+    });
+  }
+  return materials.length ? materials : null;
+}
+
 function extractMaterials(parsed) {
   let { rows, links } = parsed;
   const keep = [];
   rows.forEach((r, i) => { if (r.some((c) => String(c).trim() !== '')) keep.push({ r, i }); });
   if (!keep.length) return { materials: [], error: 'The file is empty' };
+  const takeoff = extractTakeoff(keep, links);
+  if (takeoff) return { materials: takeoff };
   const heads = keep[0].r.map((c) => String(c).trim().toLowerCase());
   const findCol = (...keys) => heads.findIndex((h) => keys.some((k) => h.includes(k)));
   let cName = findCol('material', 'item', 'name', 'description', 'product');
@@ -246,16 +325,14 @@ function extractMaterials(parsed) {
   if (cName === -1) cName = 0;
   const materials = dataRows
     .map(({ r, i }) => {
-      let link = cLink !== -1 ? String(r[cLink] || '').trim() : '';
-      if (links[i] && !looksLikeLink(link)) { const hl = Object.values(links[i]).find(Boolean); if (hl) link = hl; }
-      if (!looksLikeLink(link)) { const found = r.find((c) => looksLikeLink(c)); link = found ? String(found).trim() : ''; }
-      if (link && /^www\./i.test(link)) link = 'https://' + link;
       let price = 0;
       if (cPrice !== -1) price = parsePrice(r[cPrice]);
       else { const nums = r.filter((c, ci) => ci !== cName && !looksLikeLink(c) && parsePrice(c) > 0); if (nums.length) price = parsePrice(nums[nums.length - 1]); }
       return {
+        category: 'Other',
         name: String(r[cName] || '').trim(),
-        link,
+        unit: '',
+        link: rowLink(r, links, i, cLink),
         price,
         qty: cQty !== -1 ? parsePrice(r[cQty]) || 1 : 1,
       };

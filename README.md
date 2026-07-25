@@ -31,7 +31,8 @@ First row = headers. Recognized columns (any order, flexible names):
 - Link can be a text URL **or** a real Excel hyperlink on the cell.
 - Qty is optional (defaults to 1). Total = price × qty.
 - Re-uploading a file replaces the job's material list.
-- `.xlsx` and `.csv` both work. A ready-to-use `materials-template.xlsx` is included.
+- `.xlsx` and `.csv` both work. A ready-to-use `materials-template.xlsx` (full material takeoff workbook) is included.
+- **Material takeoff workbooks** are also supported: if the workbook has a `Summary` tab with `Category | Item | Quantity | Unit | Unit Cost ($) | Total Cost ($) | Supplier Link` columns, the portal reads that tab, skips subtotal and grand-total rows, keeps supplier hyperlinks, and groups items by category — each category is one order to place. The job page shows how many orders are left and the total cost.
 
 ## Notes
 

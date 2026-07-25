@@ -258,6 +258,17 @@ async function renderJob(id) {
   const toOrder = mats.filter((m) => !m.ordered);
   const totAll = mats.reduce((s, m) => s + m.price * (m.qty || 1), 0);
   const totOrder = toOrder.reduce((s, m) => s + m.price * (m.qty || 1), 0);
+  // group by category — each category = one supplier order to place
+  const catNames = [...new Set(mats.map((m) => m.category || 'Other'))];
+  const groups = catNames.map((c) => {
+    const items = mats.filter((m) => (m.category || 'Other') === c);
+    return {
+      name: c, items,
+      open: items.filter((m) => !m.ordered).length,
+      total: items.reduce((s, m) => s + m.price * (m.qty || 1), 0),
+    };
+  });
+  const ordersToPlace = groups.filter((g) => g.open > 0).length;
   const pays = (p.payments || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const paid = pays.reduce((s, x) => s + (x.amount || 0), 0);
   const balance = (p.price || 0) - paid;
@@ -337,24 +348,33 @@ async function renderJob(id) {
       <h3>Material List ${p.materialFileName ? '— from ' + esc(p.materialFileName) : ''}</h3>
       <div style="margin-bottom:14px">
         <input type="file" id="matFile" accept=".xlsx,.xls,.csv" style="display:none" />
-        <button class="btn gold" id="matUploadBtn">⬆ Upload Excel Material List</button>
-        <span class="muted"> Columns: material name, purchase link, price (and optional quantity). Re-uploading replaces the list.</span>
+        <button class="btn gold" id="matUploadBtn">⬆ Upload Material Takeoff Excel</button>
+        <span class="muted"> Reads the Summary tab of a material takeoff workbook (Category, Item, Quantity, Unit Cost…) or any simple list with name / link / price columns. Re-uploading replaces the list.</span>
       </div>
       ${mats.length ? `
+      <div class="info-grid" style="margin-bottom:16px">
+        <div><div class="k">Orders To Place</div><div class="v" style="color:${ordersToPlace ? 'var(--red)' : 'var(--green)'}">${ordersToPlace} of ${groups.length}</div></div>
+        <div><div class="k">Items Still To Order</div><div class="v">${toOrder.length} of ${mats.length}</div></div>
+        <div><div class="k">Cost Still To Order</div><div class="v" style="color:var(--red)">${money(totOrder)}</div></div>
+        <div><div class="k">Total Material Cost</div><div class="v">${money(totAll)}</div></div>
+      </div>
       <table>
-        <thead><tr><th style="width:40px">Ordered</th><th>Material</th><th>Purchase Link</th><th class="right">Qty</th><th class="right">Price</th><th class="right">Total</th></tr></thead>
+        <thead><tr><th style="width:40px">Ordered</th><th>Material</th><th>Purchase Link</th><th class="right">Qty</th><th>Unit</th><th class="right">Unit Cost</th><th class="right">Total</th></tr></thead>
         <tbody>
-          ${mats.map((m) => `
+          ${groups.map((g) => `
+          <tr class="totals-row"><td colspan="6">📦 ${esc(g.name)} — ${g.open ? g.open + ' item' + (g.open === 1 ? '' : 's') + ' to order' : '✓ fully ordered'}</td><td class="right">${money(g.total)}</td></tr>
+          ${g.items.map((m) => `
           <tr class="${m.ordered ? 'ordered' : ''}">
             <td><input type="checkbox" data-mid="${m.id}" ${m.ordered ? 'checked' : ''} style="width:17px;height:17px;accent-color:var(--gold)" /></td>
             <td><span class="mat-name">${esc(m.name)}</span></td>
             <td>${m.link ? `<a href="${esc(m.link)}" target="_blank" rel="noopener">Buy ↗</a>` : '<span class="muted">—</span>'}</td>
             <td class="right">${m.qty || 1}</td>
+            <td>${esc(m.unit || '')}</td>
             <td class="right">${money(m.price)}</td>
             <td class="right">${money(m.price * (m.qty || 1))}</td>
-          </tr>`).join('')}
-          <tr class="totals-row"><td colspan="5">Still to order (${toOrder.length} items)</td><td class="right" style="color:var(--red)">${money(totOrder)}</td></tr>
-          <tr class="totals-row"><td colspan="5">Total material cost (${mats.length} items)</td><td class="right">${money(totAll)}</td></tr>
+          </tr>`).join('')}`).join('')}
+          <tr class="totals-row"><td colspan="6">Still to order (${ordersToPlace} order${ordersToPlace === 1 ? '' : 's'}, ${toOrder.length} items)</td><td class="right" style="color:var(--red)">${money(totOrder)}</td></tr>
+          <tr class="totals-row"><td colspan="6">Grand total material cost (${mats.length} items)</td><td class="right">${money(totAll)}</td></tr>
         </tbody>
       </table>` : '<div class="muted">No material list uploaded yet.</div>'}
     </div>
