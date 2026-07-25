@@ -88,6 +88,7 @@ async function renderHome() {
   const isAdmin = ME.role === 'admin';
   const received = isAdmin ? projects.reduce((s, p) => s + (p.payments || []).reduce((a, x) => a + (x.amount || 0), 0), 0) : null;
   const toOrder = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).length, 0) : null;
+  const toOrderCost = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).reduce((a, m) => a + (m.price || 0) * (m.qty || 1), 0), 0) : null;
   const recentPhotos = projects
     .flatMap((p) => (p.photos || []).map((ph) => ({ ...ph, projectName: p.name, projectId: p.id })))
     .sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)))
@@ -100,7 +101,8 @@ async function renderHome() {
       <div class="stat"><div class="num" style="color:var(--red)">${money(totalValue - received)}</div><div class="lbl">Outstanding</div></div>
       <div class="stat"><div class="num" style="color:var(--green)">${money(received)}</div><div class="lbl">Received</div></div>` : ''}
       <div class="stat"><div class="num">${money(totalValue)}</div><div class="lbl">Total Contract Value</div></div>
-      ${toOrder !== null ? `<div class="stat"><div class="num">${toOrder}</div><div class="lbl">Materials To Order</div></div>` : ''}
+      ${toOrder !== null ? `<div class="stat"><div class="num">${toOrder}</div><div class="lbl">Materials To Order</div></div>
+      <div class="stat"><div class="num">${money(toOrderCost)}</div><div class="lbl">Materials To Order Cost</div></div>` : ''}
     </div>
     <div class="panel map-card" id="mapCard">
       <h3>Job Map</h3>
