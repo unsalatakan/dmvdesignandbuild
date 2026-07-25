@@ -194,7 +194,12 @@ html.light .main > .muted { color: var(--muted); }
 html.light .stat, html.light .panel, html.light .job-card { box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
 html.light .stat:hover, html.light .panel:hover { box-shadow: 0 8px 20px rgba(0,0,0,0.13); }
 html.light .job-card:hover { box-shadow: 0 10px 24px rgba(0,0,0,0.15); }
-html.light .sidebar { background: var(--black); backdrop-filter: none; }
+html.light .sidebar { background: #fff; backdrop-filter: none; border-right: 1px solid #e3e7ee; }
+html.light .sidebar nav a { color: #3c4250; }
+html.light .sidebar nav a:hover { background: #eef1f6; }
+html.light .sidebar nav a.active { background: var(--gold); color: #fff; }
+html.light .side-bottom .btn.ghost { color: #4a4f5a; border-color: #c9cdd5; }
+html.light .whoami { color: #7a7f8a; }
 
 /* ---------- mobile ---------- */
 @media (max-width: 800px) {
@@ -208,11 +213,10 @@ html.light .sidebar { background: var(--black); backdrop-filter: none; }
   .top-logo { height: 54px; position: absolute; left: 50%; transform: translateX(-50%); }
 
   /* sidebar becomes a slide-in drawer */
-  .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; width: 250px; box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
+  .sidebar { transform: translateX(-100%); transition: transform 0.25s ease; width: 250px; padding-top: 74px; box-shadow: 4px 0 20px rgba(0,0,0,0.35); }
   .sidebar.open { transform: translateX(0); }
   .nav-back.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 900; }
-  .side-logo { padding-top: 74px; } /* white band continues up behind the top bar (light mode) */
-  html:not(.light) .side-logo { padding-top: 0; margin-top: 82px; } /* dark logo clears the top bar */
+  .side-logo { display: none; } /* top bar already shows the logo on mobile */
   .sidebar nav a { padding: 14px; font-size: 16px; }
 
   .main { margin-left: 0; padding: 70px 14px 24px; }
