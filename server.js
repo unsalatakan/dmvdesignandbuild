@@ -362,7 +362,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     contractName: files.contract ? files.contract.originalname : null,
     planFile: files.plan ? files.plan.filename : null,
     planName: files.plan ? files.plan.originalname : null,
-    materialFileName: null, materials: [], notes: [], payments: [],
+    materialFileName: null, materials: [], notes: [], payments: [], photos: [],
     created: new Date().toISOString(),
   };
   db.projects.push(p); saveDb();
@@ -474,15 +474,36 @@ route('DELETE', /^\/api\/projects\/(\d+)\/payments\/(\d+)$/, (req, res, m, body,
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
 
+/* photos */
+route('POST', /^\/api\/projects\/(\d+)\/photos$/, (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const f = body.files.photo;
+  if (!f) return json(res, 400, { error: 'No photo uploaded' });
+  if (!/\.(png|jpe?g|gif|webp|heic|heif)$/i.test(f.originalname)) return json(res, 400, { error: 'Only image files are allowed' });
+  p.photos = p.photos || [];
+  const ph = { id: nextId(), file: f.filename, name: f.originalname, uploaded: new Date().toISOString() };
+  p.photos.push(ph); saveDb(); json(res, 200, ph);
+}, { admin: true, multipart: true });
+
+route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const ph = (p.photos || []).find((x) => x.id === Number(m[2]));
+  if (ph) { try { fs.unlinkSync(path.join(UPLOAD_DIR, ph.file)); } catch {} }
+  p.photos = (p.photos || []).filter((x) => x.id !== Number(m[2]));
+  saveDb(); json(res, 200, { ok: true });
+}, { admin: true });
+
 /* protected file downloads */
 route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
   const name = path.basename(decodeURIComponent(m[1]));
-  const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name));
+  const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name) || (p.photos || []).some((ph) => ph.file === name));
   if (user.role !== 'admin' && (!owner || owner.customerId !== user.id)) return json(res, 403, { error: 'No access' });
   const fp = path.join(UPLOAD_DIR, name);
   if (!fs.existsSync(fp)) return json(res, 404, { error: 'File not found' });
   const ext = path.extname(name).toLowerCase();
-  const types = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+  const types = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.heic': 'image/heic', '.heif': 'image/heif', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
   res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream' });
   fs.createReadStream(fp).pipe(res);
 });

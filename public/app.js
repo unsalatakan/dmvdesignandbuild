@@ -260,6 +260,24 @@ async function renderJob(id) {
       ${!p.lat && isAdmin ? '<div class="muted" style="margin-top:10px">⚠️ Address could not be located on the map. Edit the project and refine the address.</div>' : ''}
     </div>
 
+    <div class="panel">
+      <h3>Photos${(p.photos || []).length ? ' (' + p.photos.length + ')' : ''}</h3>
+      ${isAdmin ? `
+      <div style="margin-bottom:14px">
+        <input type="file" id="photoFile" accept="image/*" multiple style="display:none" />
+        <button class="btn gold" id="photoUploadBtn">⬆ Upload Photos</button>
+        <span class="muted"> You can select several at once.</span>
+      </div>` : ''}
+      ${(p.photos || []).length ? `
+      <div class="photo-grid">
+        ${p.photos.map((ph) => `
+        <div class="photo-item" data-view="${ph.file}">
+          <img src="/api/file/${ph.file}" alt="${esc(ph.name)}" loading="lazy" />
+          ${isAdmin ? `<button class="photo-del" data-delphoto="${ph.id}" title="Delete photo">✕</button>` : ''}
+        </div>`).join('')}
+      </div>` : '<div class="muted">No photos yet.</div>'}
+    </div>
+
     ${isAdmin ? `
     <div class="panel">
       <h3>Payments Received</h3>
@@ -332,7 +350,41 @@ async function renderJob(id) {
       </div>
     </div>` : ''}`;
 
+  // photo viewer (all users)
+  document.querySelectorAll('[data-view]').forEach((d) =>
+    d.addEventListener('click', (e) => {
+      if (e.target.closest('[data-delphoto]')) return;
+      openModal(`<img src="/api/file/${d.dataset.view}" style="width:100%;border-radius:10px;display:block" />`);
+    })
+  );
+
   if (!isAdmin) return;
+
+  // photo upload / delete
+  $('#photoUploadBtn').addEventListener('click', () => $('#photoFile').click());
+  $('#photoFile').addEventListener('change', async (e) => {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    const btn = $('#photoUploadBtn');
+    btn.disabled = true;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        btn.textContent = `Uploading ${i + 1} of ${files.length}…`;
+        const fd = new FormData();
+        fd.append('photo', files[i]);
+        await api(`/api/projects/${id}/photos`, { method: 'POST', body: fd });
+      }
+      renderJob(id);
+    } catch (err) { alert(err.message); renderJob(id); }
+  });
+  document.querySelectorAll('[data-delphoto]').forEach((b) =>
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete this photo?')) return;
+      await api(`/api/projects/${id}/photos/${b.dataset.delphoto}`, { method: 'DELETE' });
+      renderJob(id);
+    })
+  );
 
   $('#editProjBtn').addEventListener('click', () => projectModal(p));
   $('#delProjBtn').addEventListener('click', async () => {
