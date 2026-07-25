@@ -276,7 +276,7 @@ async function geocode(address) {
 function projectOut(p, user) {
   const customer = db.users.find((u) => u.id === p.customerId);
   const base = { ...p, customerName: customer ? customer.name : null };
-  if (user.role === 'customer') { const { materials, notes, ...rest } = base; return rest; }
+  if (user.role === 'customer') { const { materials, notes, payments, ...rest } = base; return rest; }
   return base;
 }
 function findProject(id, user) {
@@ -362,7 +362,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     contractName: files.contract ? files.contract.originalname : null,
     planFile: files.plan ? files.plan.filename : null,
     planName: files.plan ? files.plan.originalname : null,
-    materialFileName: null, materials: [], notes: [],
+    materialFileName: null, materials: [], notes: [], payments: [],
     created: new Date().toISOString(),
   };
   db.projects.push(p); saveDb();
@@ -447,6 +447,30 @@ route('DELETE', /^\/api\/projects\/(\d+)\/notes\/(\d+)$/, (req, res, m, body, us
   const { p, error } = findProject(m[1], user);
   if (error) return json(res, error[0], { error: error[1] });
   p.notes = p.notes.filter((x) => x.id !== Number(m[2]));
+  saveDb(); json(res, 200, { ok: true });
+}, { admin: true });
+
+/* payments */
+route('POST', /^\/api\/projects\/(\d+)\/payments$/, (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const amount = Number(body.amount);
+  if (!amount || amount <= 0) return json(res, 400, { error: 'A valid amount is required' });
+  p.payments = p.payments || [];
+  const pay = {
+    id: nextId(),
+    amount,
+    date: body.date || new Date().toISOString().slice(0, 10),
+    note: String(body.note || '').trim(),
+    created: new Date().toISOString(),
+  };
+  p.payments.push(pay); saveDb(); json(res, 200, pay);
+}, { admin: true });
+
+route('DELETE', /^\/api\/projects\/(\d+)\/payments\/(\d+)$/, (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  p.payments = (p.payments || []).filter((x) => x.id !== Number(m[2]));
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
 

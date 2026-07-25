@@ -85,11 +85,16 @@ function route() {
 async function renderHome() {
   const projects = await api('/api/projects');
   const totalValue = projects.reduce((s, p) => s + (p.price || 0), 0);
-  const toOrder = ME.role === 'admin' ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).length, 0) : null;
+  const isAdmin = ME.role === 'admin';
+  const received = isAdmin ? projects.reduce((s, p) => s + (p.payments || []).reduce((a, x) => a + (x.amount || 0), 0), 0) : null;
+  const toOrder = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).length, 0) : null;
   $('#main').innerHTML = `
     <div class="page-head"><h1>Welcome, ${esc(ME.name)}</h1></div>
     <div class="cards">
-      <div class="stat"><div class="num">${projects.length}</div><div class="lbl">${ME.role === 'admin' ? 'Active Jobs' : 'My Jobs'}</div></div>
+      <div class="stat"><div class="num">${projects.length}</div><div class="lbl">${isAdmin ? 'Active Jobs' : 'My Jobs'}</div></div>
+      ${isAdmin ? `
+      <div class="stat"><div class="num" style="color:var(--red)">${money(totalValue - received)}</div><div class="lbl">Outstanding</div></div>
+      <div class="stat"><div class="num" style="color:var(--green)">${money(received)}</div><div class="lbl">Received</div></div>` : ''}
       <div class="stat"><div class="num">${money(totalValue)}</div><div class="lbl">Total Contract Value</div></div>
       ${toOrder !== null ? `<div class="stat"><div class="num">${toOrder}</div><div class="lbl">Materials To Order</div></div>` : ''}
     </div>
@@ -110,8 +115,9 @@ function drawMap(elId, projects, interactivePopups) {
     subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
     attribution: '&copy; Google Maps'
   }).addTo(map);
+  let group = null;
   if (located.length) {
-    const group = L.featureGroup(located.map((p) => {
+    group = L.featureGroup(located.map((p) => {
       const m = L.marker([p.lat, p.lng]).bindPopup(
         `<div class="map-popup"><a href="#/job/${p.id}">${esc(p.name)}</a><br>${esc(p.address)}<br>Starts: ${fmtDate(p.startDate)}</div>`
       );
@@ -121,6 +127,19 @@ function drawMap(elId, projects, interactivePopups) {
     map.fitBounds(group.getBounds().pad(0.25), { maxZoom: 13 });
   } else {
     map.setView([38.9, -77.03], 9); // DMV area default
+  }
+  // re-measure once layout settles, so the map never renders partially (mobile fix)
+  const fixSize = () => {
+    map.invalidateSize();
+    if (group) map.fitBounds(group.getBounds().pad(0.25), { maxZoom: 13 });
+  };
+  setTimeout(fixSize, 150);
+  setTimeout(fixSize, 500);
+  if (window.ResizeObserver) {
+    const el = document.getElementById(elId);
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(el);
+    map.on('unload', () => ro.disconnect());
   }
   return map;
 }
@@ -214,6 +233,10 @@ async function renderJob(id) {
   const toOrder = mats.filter((m) => !m.ordered);
   const totAll = mats.reduce((s, m) => s + m.price * (m.qty || 1), 0);
   const totOrder = toOrder.reduce((s, m) => s + m.price * (m.qty || 1), 0);
+  const pays = (p.payments || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const paid = pays.reduce((s, x) => s + (x.amount || 0), 0);
+  const balance = (p.price || 0) - paid;
+  const today = new Date().toISOString().slice(0, 10);
 
   $('#main').innerHTML = `
     <div class="page-head">
@@ -238,6 +261,35 @@ async function renderJob(id) {
     </div>
 
     ${isAdmin ? `
+    <div class="panel">
+      <h3>Payments Received</h3>
+      <div class="info-grid" style="margin-bottom:16px">
+        <div><div class="k">Contract Price</div><div class="v">${money(p.price)}</div></div>
+        <div><div class="k">Received</div><div class="v" style="color:var(--green)">${money(paid)}</div></div>
+        <div><div class="k">Balance Due</div><div class="v" style="color:${balance > 0 ? 'var(--red)' : 'var(--green)'}">${money(balance)}</div></div>
+      </div>
+      ${pays.length ? `
+      <table>
+        <thead><tr><th>Date</th><th>For</th><th class="right">Amount</th><th style="width:36px"></th></tr></thead>
+        <tbody>
+          ${pays.map((x) => `
+          <tr>
+            <td>${fmtDate(x.date)}</td>
+            <td>${esc(x.note || '—')}</td>
+            <td class="right"><b>${money(x.amount)}</b></td>
+            <td class="right"><button class="del" data-delpay="${x.id}" title="Delete payment">✕</button></td>
+          </tr>`).join('')}
+          <tr class="totals-row"><td colspan="2">Total received (${pays.length} payment${pays.length === 1 ? '' : 's'})</td><td class="right" style="color:var(--green)">${money(paid)}</td><td></td></tr>
+        </tbody>
+      </table>` : '<div class="muted">No payments recorded yet.</div>'}
+      <div class="form-grid" style="margin-top:16px">
+        <div><label class="f">Amount ($)</label><input class="f" id="payAmount" type="number" step="0.01" min="0" placeholder="0.00" /></div>
+        <div><label class="f">Date Received</label><input class="f" id="payDate" type="date" value="${today}" /></div>
+        <div class="full"><label class="f">What For (e.g. deposit, framing complete)</label><input class="f" id="payNote" placeholder="Optional" /></div>
+        <div class="full" style="text-align:right"><button class="btn gold" id="payAddBtn">+ Add Payment</button></div>
+      </div>
+    </div>
+
     <div class="panel">
       <h3>Material List ${p.materialFileName ? '— from ' + esc(p.materialFileName) : ''}</h3>
       <div style="margin-bottom:14px">
@@ -288,6 +340,23 @@ async function renderJob(id) {
     await api('/api/projects/' + id, { method: 'DELETE' });
     location.hash = '#/jobs';
   });
+
+  // payments
+  $('#payAddBtn').addEventListener('click', async () => {
+    const amount = parseFloat($('#payAmount').value);
+    if (!amount || amount <= 0) { alert('Enter a valid amount.'); return; }
+    try {
+      await api(`/api/projects/${id}/payments`, { method: 'POST', json: { amount, date: $('#payDate').value, note: $('#payNote').value.trim() } });
+      renderJob(id);
+    } catch (err) { alert(err.message); }
+  });
+  document.querySelectorAll('[data-delpay]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Delete this payment?')) return;
+      await api(`/api/projects/${id}/payments/${b.dataset.delpay}`, { method: 'DELETE' });
+      renderJob(id);
+    })
+  );
 
   // materials
   $('#matUploadBtn').addEventListener('click', () => $('#matFile').click());
