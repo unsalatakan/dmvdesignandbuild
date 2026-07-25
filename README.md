@@ -39,3 +39,7 @@ First row = headers. Recognized columns (any order, flexible names):
 - Restarting the server logs everyone out (they just sign in again).
 - To use on your office network, other devices can reach it at `http://YOUR-COMPUTER-IP:3000`. For customers to log in from anywhere, host this folder on any Node.js host (Render, Railway, a VPS) — it runs as-is.
 - To change the admin password: delete the admin entry in `data/db.json` is not needed — just edit it: replace the `password` value with the SHA-256 hash of your new password, or ask me to change it for you.
+
+---
+
+Created by Atakan
