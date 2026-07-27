@@ -284,26 +284,54 @@ window.addEventListener('hashchange', () => { $('#mapFull').classList.add('hidde
 async function renderJobs() {
   const projects = await api('/api/projects');
   const isAdmin = ME.role === 'admin';
-  $('#main').innerHTML = `
-    <div class="page-head">
-      <h1>${isAdmin ? 'Jobs' : 'My Jobs'}</h1>
-      ${isAdmin ? '<button class="btn gold" id="newProjBtn">+ New Project</button>' : ''}
-    </div>
-    ${projects.length ? `<div class="job-grid">${projects.map((p) => `
+  const card = (p, showCustomer) => `
       <div class="job-card" onclick="location.hash='#/job/${p.id}'">
         <h4>${esc(p.name)}</h4>
         <div class="addr">📍 ${esc(p.address)}</div>
         <div class="job-meta">
           <span><b>${money(p.price)}</b></span>
           <span>Starts <b>${fmtDate(p.startDate)}</b></span>
-          ${p.customerName ? `<span class="badge">${esc(p.customerName)}</span>` : ''}
+          ${showCustomer && p.customerName ? `<span class="badge">${esc(p.customerName)}</span>` : ''}
         </div>
         ${isAdmin ? `<div class="job-meta" style="margin-top:8px">
           <span>${(p.materials || []).filter((m) => !m.ordered).length} materials to order</span>
           <span>${(p.notes || []).filter((n) => !n.done).length} open notes</span>
         </div>` : ''}
-      </div>`).join('')}</div>`
-      : '<div class="panel muted">No jobs yet.' + (isAdmin ? ' Click “+ New Project” to create your first job.' : '') + '</div>'}`;
+      </div>`;
+  let body;
+  if (!projects.length) {
+    body = '<div class="panel muted">No jobs yet.' + (isAdmin ? ' Click “+ New Project” to create your first job.' : '') + '</div>';
+  } else if (!isAdmin) {
+    body = `<div class="job-grid">${projects.map((p) => card(p, false)).join('')}</div>`;
+  } else {
+    /* group jobs under their customer */
+    const groups = new Map();
+    for (const p of projects) {
+      const key = p.customerName || 'Unassigned';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(p);
+    }
+    const names = [...groups.keys()].sort((a, b) =>
+      (a === 'Unassigned') - (b === 'Unassigned') || a.localeCompare(b));
+    body = names.map((n) => {
+      const list = groups.get(n);
+      const total = list.reduce((s, p) => s + (p.price || 0), 0);
+      return `
+      <section class="cust-group">
+        <div class="cust-head">
+          <h3>👤 ${esc(n)}</h3>
+          <span class="muted">${list.length} job${list.length === 1 ? '' : 's'} — ${money(total)}</span>
+        </div>
+        <div class="job-grid">${list.map((p) => card(p, false)).join('')}</div>
+      </section>`;
+    }).join('');
+  }
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>${isAdmin ? 'Jobs' : 'My Jobs'}</h1>
+      ${isAdmin ? '<button class="btn gold" id="newProjBtn">+ New Project</button>' : ''}
+    </div>
+    ${body}`;
   if (isAdmin) $('#newProjBtn').addEventListener('click', () => projectModal());
 }
 

@@ -299,3 +299,9 @@ html.light .chart-panel h3 { color: var(--muted); }
 /* photos page */
 .photo-job-link { color: inherit; text-decoration: none; }
 .photo-job-link:hover { color: var(--gold); }
+
+/* jobs grouped by customer */
+.cust-group { margin-bottom: 28px; }
+.cust-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid var(--gold); }
+.cust-head h3 { font-size: 16px; color: #fff; letter-spacing: 0.4px; text-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.cust-head .muted { font-size: 13px; }
