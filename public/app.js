@@ -108,6 +108,8 @@ function route() {
   if (!ME) return;
   const h = location.hash || '#/home';
   document.querySelectorAll('#navLinks a').forEach((a) => a.classList.toggle('active', h.startsWith(a.dataset.h)));
+  const jobPhotosMatch = h.match(/^#\/job\/(\d+)\/photos/);
+  if (jobPhotosMatch) return renderJobPhotos(Number(jobPhotosMatch[1]));
   const jobMatch = h.match(/^#\/job\/(\d+)/);
   if (jobMatch) return renderJob(Number(jobMatch[1]));
   if (h.startsWith('#/jobs')) return renderJobs();
@@ -604,7 +606,7 @@ async function renderJob(id) {
     </div>` : ''}
 
     <div class="panel">
-      <h3>Photos${(p.photos || []).length ? ' (' + p.photos.length + ')' : ''}</h3>
+      <h3><a class="photo-job-link" href="#/job/${p.id}/photos">Photos${(p.photos || []).length ? ' (' + p.photos.length + ')' : ''} ›</a></h3>
       ${isAdmin ? `
       <div style="margin-bottom:14px">
         <input type="file" id="photoFile" accept="image/*" multiple style="display:none" />
@@ -619,7 +621,7 @@ async function renderJob(id) {
           ${isAdmin ? `<button class="photo-del" data-delphoto="${ph.id}" title="Delete photo">✕</button>` : ''}
         </div>`).join('')}
       </div>
-      <a href="javascript:void(0)" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">Show all ${p.photos.length} photos ↓</a>` : '<div class="muted">No photos yet.</div>'}
+      <a href="#/job/${p.id}/photos" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">View all ${p.photos.length} photos →</a>` : '<div class="muted">No photos yet.</div>'}
     </div>
 
     ${isAdmin ? `
@@ -714,24 +716,17 @@ async function renderJob(id) {
     })
   );
 
-  // cap the photo grid at 2 rows until "Show all" is clicked
+  // cap the photo grid at 2 rows; the "View all" link opens the job's photo page
   const jpg = document.getElementById('jobPhotoGrid');
   const jpMore = document.getElementById('jobPhotosMore');
   if (jpg && jpMore) {
-    let expanded = false;
     const capRows = () => {
       if (!document.body.contains(jpg)) { window.removeEventListener('resize', capRows); return; }
-      if (expanded) return;
       const cols = getComputedStyle(jpg).gridTemplateColumns.split(' ').length;
       const max = cols * 2;
       [...jpg.children].forEach((el, i) => (el.style.display = i < max ? '' : 'none'));
       jpMore.style.display = jpg.children.length > max ? 'block' : 'none';
     };
-    jpMore.addEventListener('click', () => {
-      expanded = true;
-      [...jpg.children].forEach((el) => (el.style.display = ''));
-      jpMore.style.display = 'none';
-    });
     capRows();
     window.addEventListener('resize', capRows);
   }
@@ -900,6 +895,82 @@ async function renderCustomers() {
       if (!confirm('Delete this customer login? Their jobs stay but become unassigned.')) return;
       await api('/api/customers/' + b.dataset.del, { method: 'DELETE' });
       renderCustomers();
+    })
+  );
+}
+
+/* ---------- JOB PHOTO PAGE (all photos for one job, by date) ---------- */
+async function renderJobPhotos(id) {
+  let p;
+  try { p = await api('/api/projects/' + id); }
+  catch { $('#main').innerHTML = '<div class="panel">Job not found.</div>'; return; }
+  const isStaff = ME.role !== 'customer';
+  const photos = (p.photos || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
+  /* group by upload date (newest first) */
+  const groups = [];
+  for (const ph of photos) {
+    const d = String(ph.uploaded).slice(0, 10);
+    if (!groups.length || groups[groups.length - 1].d !== d) groups.push({ d, items: [] });
+    groups[groups.length - 1].items.push(ph);
+  }
+  let idx = 0;
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>${esc(p.name)} — Photos${photos.length ? ' (' + photos.length + ')' : ''}</h1>
+      <a class="btn" href="#/job/${p.id}">← Back to Job</a>
+    </div>
+    ${isStaff ? `
+    <div style="margin-bottom:18px">
+      <input type="file" id="photoFile" accept="image/*" multiple style="display:none" />
+      <button class="btn gold" id="photoUploadBtn">⬆ Upload Photos</button>
+      <span class="muted"> You can select several at once.</span>
+    </div>` : ''}
+    ${photos.length ? groups.map((g) => `
+    <section class="cust-group">
+      <div class="cust-head">
+        <h3>📅 ${fmtDate(g.d)}</h3>
+        <span class="muted">${g.items.length} photo${g.items.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="photo-grid">
+        ${g.items.map((ph) => `
+        <div class="photo-item" data-view="${idx++}">
+          <img src="/api/file/${ph.thumb || ph.file}" alt="${esc(ph.name)}" loading="lazy" />
+          ${isStaff ? `<button class="photo-del" data-delphoto="${ph.id}" title="Delete photo">✕</button>` : ''}
+        </div>`).join('')}
+      </div>
+    </section>`).join('') : '<div class="panel muted">No photos yet.</div>'}`;
+  document.querySelectorAll('[data-view]').forEach((d) =>
+    d.addEventListener('click', (e) => {
+      if (e.target.closest('[data-delphoto]')) return;
+      openLightbox(photos, Number(d.dataset.view));
+    })
+  );
+  if (!isStaff) return;
+  $('#photoUploadBtn').addEventListener('click', () => $('#photoFile').click());
+  $('#photoFile').addEventListener('change', async (e) => {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    const btn = $('#photoUploadBtn');
+    btn.disabled = true;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        btn.textContent = `Uploading ${i + 1} of ${files.length}…`;
+        const photo = await heicToJpeg(files[i]);
+        const fd = new FormData();
+        fd.append('photo', photo, photo.name);
+        const th = await makeThumb(photo);
+        if (th) fd.append('thumb', th, 'thumb.jpg');
+        await api(`/api/projects/${id}/photos`, { method: 'POST', body: fd });
+      }
+      renderJobPhotos(id);
+    } catch (err) { alert(err.message); renderJobPhotos(id); }
+  });
+  document.querySelectorAll('[data-delphoto]').forEach((b) =>
+    b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!confirm('Delete this photo?')) return;
+      await api(`/api/projects/${id}/photos/${b.dataset.delphoto}`, { method: 'DELETE' });
+      renderJobPhotos(id);
     })
   );
 }
