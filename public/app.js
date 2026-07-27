@@ -212,13 +212,14 @@ async function renderHome() {
     ${recentPhotos.length ? `
     <div class="panel">
       <h3>Photos <span class="muted" style="font-size:13px">— ${recentPhotos.length}</span></h3>
-      <div class="photo-grid">
+      <div class="photo-grid" id="homePhotoGrid">
         ${recentPhotos.map((ph, i) => `
         <div class="photo-item" data-rview="${i}">
           <img src="/api/file/${ph.file}" alt="${esc(ph.name)}" loading="lazy" />
           <a class="photo-tag" href="#/job/${ph.projectId}" onclick="event.stopPropagation()">${esc(ph.projectName)}</a>
         </div>`).join('')}
       </div>
+      <a href="#/photos" class="muted" id="allPhotosLink" style="display:none;margin-top:10px">View all ${recentPhotos.length} photos →</a>
     </div>` : ''}
     <div class="panel map-card" id="mapCard">
       <h3>Job Map</h3>
@@ -248,6 +249,20 @@ async function renderHome() {
       openLightbox(recentPhotos, Number(d.dataset.rview));
     })
   );
+  /* cap the home photo grid at 2 rows (adapts to screen width) */
+  const pg = document.getElementById('homePhotoGrid');
+  if (pg) {
+    const capRows = () => {
+      if (!document.body.contains(pg)) { window.removeEventListener('resize', capRows); return; }
+      const cols = getComputedStyle(pg).gridTemplateColumns.split(' ').length;
+      const max = cols * 2;
+      [...pg.children].forEach((el, i) => (el.style.display = i < max ? '' : 'none'));
+      const link = document.getElementById('allPhotosLink');
+      if (link) link.style.display = recentPhotos.length > max ? 'block' : 'none';
+    };
+    capRows();
+    window.addEventListener('resize', capRows);
+  }
 }
 
 function drawMap(elId, projects, interactivePopups) {
