@@ -164,6 +164,19 @@ function loginFailed(ip, username) {
 const ALERT_EMAIL = process.env.ALERT_EMAIL || 'info@dmv-designandbuild.com';
 const RESEND_FROM = process.env.RESEND_FROM || 'DMV Portal Security <onboarding@resend.dev>';
 const alertsSent = new Map(); // ip -> last alert timestamp (max 1 email per IP per hour)
+
+async function sendEmail(to, subject, text) {
+  if (!process.env.RESEND_API_KEY || !to) return;
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + process.env.RESEND_API_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ from: RESEND_FROM, to: [to], subject, text }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) { console.error('Email failed:', e.message); }
+}
+
 async function sendLoginAlert(ip, username) {
   if (!process.env.RESEND_API_KEY) return;
   if ((alertsSent.get(ip) || 0) > Date.now() - 60 * 60 * 1000) return;
@@ -174,24 +187,29 @@ async function sendLoginAlert(ip, username) {
     const j = await r.json();
     if (j && j.success) loc = [j.city, j.region, j.country].filter(Boolean).join(', ') + (j.connection && j.connection.isp ? ' — ' + j.connection.isp : '');
   } catch {}
-  try {
-    await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { authorization: 'Bearer ' + process.env.RESEND_API_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        from: RESEND_FROM,
-        to: [ALERT_EMAIL],
-        subject: '⚠ Portal security: repeated failed logins blocked (' + ip + ')',
-        text: 'Someone was blocked after 5 failed login attempts on the portal.\n\n'
-          + 'IP address: ' + ip + '\n'
-          + 'Location: ' + loc + '\n'
-          + 'Last username tried: ' + (username || '(empty)') + '\n'
-          + 'Time: ' + new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' (ET)\n\n'
-          + 'The IP is blocked for 15 minutes. If these alerts keep coming, consider changing your passwords.',
-      }),
-      signal: AbortSignal.timeout(8000),
-    });
-  } catch (e) { console.error('Security alert email failed:', e.message); }
+  await sendEmail(ALERT_EMAIL, '⚠ Portal security: repeated failed logins blocked (' + ip + ')',
+    'Someone was blocked after 5 failed login attempts on the portal.\n\n'
+    + 'IP address: ' + ip + '\n'
+    + 'Location: ' + loc + '\n'
+    + 'Last username tried: ' + (username || '(empty)') + '\n'
+    + 'Time: ' + new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' (ET)\n\n'
+    + 'The IP is blocked for 15 minutes. If these alerts keep coming, consider changing your passwords.');
+}
+
+/* ================= customer notifications =================
+ * Emails the assigned customer when new documents or photos are added.
+ * Max one email per project per type per hour, so photo batches = one email.
+ * Requires the customer to have an email set, and RESEND_FROM to use a
+ * domain verified in Resend (onboarding@resend.dev can't email customers). */
+const notifySent = new Map(); // "projectId:kind" -> last timestamp
+function notifyCustomer(p, kind, detail) {
+  const c = db.users.find((u) => u.id === p.customerId && u.role === 'customer');
+  if (!c || !c.email) return;
+  const key = p.id + ':' + kind;
+  if ((notifySent.get(key) || 0) > Date.now() - 60 * 60 * 1000) return;
+  notifySent.set(key, Date.now());
+  sendEmail(c.email, 'Update on your project: ' + p.name,
+    'Hi ' + c.name + ',\n\n' + detail + '\n\nLog in to the portal to take a look.\n\n— DMV Design and Build\ninfo@dmv-designandbuild.com');
 }
 
 /* ================= helpers ================= */
@@ -526,6 +544,16 @@ route('POST', /^\/api\/login$/, async (req, res, m, body) => {
 route('POST', /^\/api\/logout$/, (req, res) => { destroySession(req, res); json(res, 200, { ok: true }); }, { public: true });
 route('GET', /^\/api\/me$/, (req, res, m, b, user) => json(res, 200, user || null), { public: true });
 
+/* change own password (any logged-in user) */
+route('PUT', /^\/api\/password$/, (req, res, m, body, user) => {
+  const { current, next } = body || {};
+  if (!next || String(next).length < 6) return json(res, 400, { error: 'New password must be at least 6 characters' });
+  const u = db.users.find((x) => x.id === user.id);
+  if (!u || u.password !== hash(current || '')) return json(res, 400, { error: 'Current password is incorrect' });
+  u.password = hash(String(next));
+  saveDb(); json(res, 200, { ok: true });
+});
+
 /* customers */
 route('GET', /^\/api\/customers$/, (req, res, m, b, user) => {
   json(res, 200, db.users.filter((u) => u.role === 'customer').map(({ password, ...u }) => ({
@@ -534,11 +562,11 @@ route('GET', /^\/api\/customers$/, (req, res, m, b, user) => {
 }, { admin: true });
 
 route('POST', /^\/api\/customers$/, (req, res, m, body) => {
-  const { name, username, password } = body || {};
+  const { name, username, password, email } = body || {};
   if (!name || !username || !password) return json(res, 400, { error: 'Name, username and password are required' });
   const uname = String(username).trim().toLowerCase();
   if (db.users.some((u) => u.username === uname)) return json(res, 400, { error: 'Username already exists' });
-  const c = { id: nextId(), username: uname, password: hash(password), role: 'customer', name: String(name).trim() };
+  const c = { id: nextId(), username: uname, password: hash(password), role: 'customer', name: String(name).trim(), email: email ? String(email).trim() : null };
   db.users.push(c); saveDb();
   const { password: _, ...out } = c;
   json(res, 200, out);
@@ -549,6 +577,7 @@ route('PUT', /^\/api\/customers\/(\d+)$/, (req, res, m, body) => {
   if (!c) return json(res, 404, { error: 'Customer not found' });
   if (body.name) c.name = String(body.name).trim();
   if (body.password) c.password = hash(body.password);
+  if (body.email !== undefined) c.email = String(body.email || '').trim() || null;
   saveDb();
   const { password: _, ...out } = c;
   json(res, 200, out);
@@ -583,6 +612,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     name: fields.name, address: fields.address,
     price: Number(fields.price) || 0,
     startDate: fields.startDate || null,
+    status: ['upcoming', 'active', 'done'].includes(fields.status) ? fields.status : 'active',
     customerId: fields.customerId ? Number(fields.customerId) : null,
     lat: geo.lat, lng: geo.lng,
     contractFile: files.contract ? files.contract.filename : null,
@@ -593,6 +623,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     created: new Date().toISOString(),
   };
   db.projects.push(p); saveDb();
+  if (files.contract || files.plan) notifyCustomer(p, 'doc', 'New documents were uploaded to your project "' + p.name + '".');
   json(res, 200, projectOut(p, user));
 }, { admin: true, multipart: true });
 
@@ -603,6 +634,7 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
   if (fields.name) p.name = fields.name;
   if (fields.price !== undefined) p.price = Number(fields.price) || 0;
   if (fields.startDate !== undefined) p.startDate = fields.startDate || null;
+  if (fields.status !== undefined && ['upcoming', 'active', 'done'].includes(fields.status)) p.status = fields.status;
   if (fields.customerId !== undefined) p.customerId = fields.customerId ? Number(fields.customerId) : null;
   if (fields.address && fields.address !== p.address) {
     p.address = fields.address;
@@ -612,6 +644,7 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
   if (files.contract) { await storeFile(files.contract); p.contractFile = files.contract.filename; p.contractName = files.contract.originalname; }
   if (files.plan) { await storeFile(files.plan); p.planFile = files.plan.filename; p.planName = files.plan.originalname; }
   saveDb();
+  if (files.contract || files.plan) notifyCustomer(p, 'doc', 'New documents were uploaded to your project "' + p.name + '".');
   json(res, 200, projectOut(p, user));
 }, { admin: true, multipart: true });
 
@@ -716,7 +749,9 @@ route('POST', /^\/api\/projects\/(\d+)\/photos$/, async (req, res, m, body, user
   if (t) await storeFile(t);
   p.photos = p.photos || [];
   const ph = { id: nextId(), file: f.filename, thumb: t ? t.filename : null, name: f.originalname, uploaded: new Date().toISOString() };
-  p.photos.push(ph); saveDb(); json(res, 200, ph);
+  p.photos.push(ph); saveDb();
+  notifyCustomer(p, 'photo', 'New photos were just added to your project "' + p.name + '".');
+  json(res, 200, ph);
 }, { admin: true, multipart: true });
 
 route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, body, user) => {
@@ -785,6 +820,5 @@ server.listen(PORT, () => {
   console.log('');
   console.log('  DMV Design and Build — Project Portal');
   console.log('  Running at:  http://localhost:' + PORT);
-  console.log('  Admin login: dmv / dmv123');
   console.log('');
 });

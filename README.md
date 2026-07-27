@@ -10,7 +10,7 @@ node server.js
 
 Then open **http://localhost:3000** in your browser.
 
-- **Admin login:** username `dmv` / password `dmv123`
+- **Admin login:** use your admin credentials (change the default password after first login via the sidebar)
 - Customers log in on the same page with the accounts you create on the **Customers** page.
 
 ## What it does

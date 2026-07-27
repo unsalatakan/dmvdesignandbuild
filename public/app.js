@@ -3,6 +3,11 @@ let ME = null;
 let homeMap = null, bigMap = null;
 let todoTab = 'open'; // which tab of the home to-do panel is selected
 
+/* job statuses */
+const STATUS = { upcoming: ['Upcoming', '#8a63d2'], active: ['In Progress', '#1d9d5c'], done: ['Completed', '#64748b'] };
+const statusOf = (p) => (STATUS[p.status] ? p.status : 'active');
+const statusBadge = (p) => { const [label, color] = STATUS[statusOf(p)]; return `<span class="badge" style="background:${color};color:#fff">${label}</span>`; };
+
 const $ = (s) => document.querySelector(s);
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -50,6 +55,30 @@ $('#loginForm').addEventListener('submit', async (e) => {
   } catch (err) { $('#loginError').textContent = err.message; }
 });
 $('#logoutBtn').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.hash = ''; location.reload(); });
+
+$('#pwBtn').addEventListener('click', () => {
+  openModal(`
+    <h2>Change Password</h2>
+    <form id="pwForm" class="form-grid">
+      <div class="full"><label class="f">Current Password</label><input class="f" type="password" name="current" required autocomplete="current-password" /></div>
+      <div class="full"><label class="f">New Password (min 6 characters)</label><input class="f" type="password" name="next" required minlength="6" autocomplete="new-password" /></div>
+      <div class="full"><label class="f">Confirm New Password</label><input class="f" type="password" name="confirm" required autocomplete="new-password" /></div>
+      <div class="modal-actions full">
+        <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn gold">Change Password</button>
+      </div>
+      <div class="error full" id="pwErr"></div>
+    </form>`);
+  $('#pwForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    if (f.next !== f.confirm) { $('#pwErr').textContent = 'New passwords do not match'; return; }
+    try {
+      await api('/api/password', { method: 'PUT', json: { current: f.current, next: f.next } });
+      closeModal(); alert('Password changed.');
+    } catch (err) { $('#pwErr').textContent = err.message; }
+  });
+});
 
 /* ---------- theme toggle ---------- */
 function paintThemeBtn() {
@@ -275,8 +304,9 @@ function drawMap(elId, projects, interactivePopups) {
   let group = null;
   if (located.length) {
     group = L.featureGroup(located.map((p) => {
-      const m = L.marker([p.lat, p.lng]).bindPopup(
-        `<div class="map-popup"><a href="#/job/${p.id}">${esc(p.name)}</a><br>${esc(p.address)}<br>Starts: ${fmtDate(p.startDate)}</div>`
+      const [label, color] = STATUS[statusOf(p)];
+      const m = L.circleMarker([p.lat, p.lng], { radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).bindPopup(
+        `<div class="map-popup"><a href="#/job/${p.id}">${esc(p.name)}</a><br>${esc(p.address)}<br>Starts: ${fmtDate(p.startDate)}<br><b style="color:${color}">${label}</b></div>`
       );
       return m;
     }));
@@ -315,39 +345,42 @@ $('#mapCloseBtn').addEventListener('click', (e) => {
 window.addEventListener('hashchange', () => { $('#mapFull').classList.add('hidden'); if (bigMap) { bigMap.remove(); bigMap = null; } });
 
 /* ---------- JOBS LIST ---------- */
+let jobsFilter = 'all', jobsQuery = '';
 async function renderJobs() {
   const projects = await api('/api/projects');
   const isAdmin = ME.role === 'admin';
-  const card = (p, showCustomer) => `
+  const card = (p) => `
       <div class="job-card" onclick="location.hash='#/job/${p.id}'">
         <h4>${esc(p.name)}</h4>
         <div class="addr">📍 ${esc(p.address)}</div>
         <div class="job-meta">
           <span><b>${money(p.price)}</b></span>
           <span>Starts <b>${fmtDate(p.startDate)}</b></span>
-          ${showCustomer && p.customerName ? `<span class="badge">${esc(p.customerName)}</span>` : ''}
+          ${statusBadge(p)}
         </div>
         ${isAdmin ? `<div class="job-meta" style="margin-top:8px">
           <span>${(p.materials || []).filter((m) => !m.ordered).length} materials to order</span>
           <span>${(p.notes || []).filter((n) => !n.done).length} open notes</span>
         </div>` : ''}
       </div>`;
-  let body;
-  if (!projects.length) {
-    body = '<div class="panel muted">No jobs yet.' + (isAdmin ? ' Click “+ New Project” to create your first job.' : '') + '</div>';
-  } else if (!isAdmin) {
-    body = `<div class="job-grid">${projects.map((p) => card(p, false)).join('')}</div>`;
-  } else {
+  const buildBody = () => {
+    const q = jobsQuery.trim().toLowerCase();
+    const shown = projects.filter((p) =>
+      (jobsFilter === 'all' || statusOf(p) === jobsFilter) &&
+      (!q || [p.name, p.address, p.customerName].some((v) => v && v.toLowerCase().includes(q))));
+    if (!projects.length) return '<div class="panel muted">No jobs yet.' + (isAdmin ? ' Click “+ New Project” to create your first job.' : '') + '</div>';
+    if (!shown.length) return '<div class="panel muted">No jobs match your search.</div>';
+    if (!isAdmin) return `<div class="job-grid">${shown.map(card).join('')}</div>`;
     /* group jobs under their customer */
     const groups = new Map();
-    for (const p of projects) {
+    for (const p of shown) {
       const key = p.customerName || 'Unassigned';
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(p);
     }
     const names = [...groups.keys()].sort((a, b) =>
       (a === 'Unassigned') - (b === 'Unassigned') || a.localeCompare(b));
-    body = names.map((n) => {
+    return names.map((n) => {
       const list = groups.get(n);
       const total = list.reduce((s, p) => s + (p.price || 0), 0);
       return `
@@ -356,17 +389,35 @@ async function renderJobs() {
           <h3>👤 ${esc(n)}</h3>
           <span class="muted">${list.length} job${list.length === 1 ? '' : 's'} — ${money(total)}</span>
         </div>
-        <div class="job-grid">${list.map((p) => card(p, false)).join('')}</div>
+        <div class="job-grid">${list.map(card).join('')}</div>
       </section>`;
     }).join('');
-  }
+  };
+  const chip = (k, label) => `<button class="todo-tab ${jobsFilter === k ? 'active' : ''}" data-jf="${k}">${label}</button>`;
   $('#main').innerHTML = `
     <div class="page-head">
       <h1>${isAdmin ? 'Jobs' : 'My Jobs'}</h1>
       ${isAdmin ? '<button class="btn gold" id="newProjBtn">+ New Project</button>' : ''}
     </div>
-    ${body}`;
-  if (isAdmin) $('#newProjBtn').addEventListener('click', () => projectModal());
+    ${isAdmin ? `
+    <div class="jobs-controls">
+      <input type="search" id="jobsSearch" placeholder="Search jobs by name, address or customer…" value="${esc(jobsQuery)}" />
+      <div class="todo-tabs">
+        ${chip('all', 'All')}${Object.entries(STATUS).map(([k, [label]]) => chip(k, label)).join('')}
+      </div>
+    </div>` : ''}
+    <div id="jobsList">${buildBody()}</div>`;
+  if (isAdmin) {
+    $('#newProjBtn').addEventListener('click', () => projectModal());
+    $('#jobsSearch').addEventListener('input', (e) => { jobsQuery = e.target.value; $('#jobsList').innerHTML = buildBody(); });
+    document.querySelectorAll('[data-jf]').forEach((b) =>
+      b.addEventListener('click', () => {
+        jobsFilter = b.dataset.jf;
+        document.querySelectorAll('[data-jf]').forEach((x) => x.classList.toggle('active', x === b));
+        $('#jobsList').innerHTML = buildBody();
+      })
+    );
+  }
 }
 
 /* ---------- ORDERS (admin) ---------- */
@@ -456,6 +507,11 @@ async function projectModal(p) {
       <div class="full"><label class="f">Address * (used to pin the job on the map)</label><input class="f" name="address" required value="${isEdit ? esc(p.address) : ''}" /></div>
       <div><label class="f">Price ($)</label><input class="f" name="price" type="number" step="0.01" min="0" value="${isEdit ? p.price : ''}" /></div>
       <div><label class="f">Job Start Date</label><input class="f" name="startDate" type="date" value="${isEdit && p.startDate ? p.startDate : ''}" /></div>
+      <div><label class="f">Status</label>
+        <select class="f" name="status">
+          ${Object.entries(STATUS).map(([k, [label]]) => `<option value="${k}" ${isEdit && statusOf(p) === k ? 'selected' : (!isEdit && k === 'active' ? 'selected' : '')}>${label}</option>`).join('')}
+        </select>
+      </div>
       <div class="full"><label class="f">Customer</label>
         <select class="f" name="customerId">
           <option value="">— No customer assigned —</option>
@@ -683,9 +739,10 @@ async function renderJob(id) {
     try {
       for (let i = 0; i < files.length; i++) {
         btn.textContent = `Uploading ${i + 1} of ${files.length}…`;
+        const photo = await heicToJpeg(files[i]);
         const fd = new FormData();
-        fd.append('photo', files[i]);
-        const th = await makeThumb(files[i]);
+        fd.append('photo', photo, photo.name);
+        const th = await makeThumb(photo);
         if (th) fd.append('thumb', th, 'thumb.jpg');
         await api(`/api/projects/${id}/photos`, { method: 'POST', body: fd });
       }
@@ -775,13 +832,15 @@ async function renderCustomers() {
     <div class="panel">
       ${customers.length ? `
       <table>
-        <thead><tr><th>Name</th><th>Username</th><th>Jobs</th><th class="right">Actions</th></tr></thead>
+        <thead><tr><th>Name</th><th>Username</th><th>Email (for notifications)</th><th>Jobs</th><th class="right">Actions</th></tr></thead>
         <tbody>${customers.map((c) => `
           <tr>
             <td><b>${esc(c.name)}</b></td>
             <td>${esc(c.username)}</td>
+            <td>${c.email ? esc(c.email) : '<span class="muted">—</span>'}</td>
             <td>${c.projectCount}</td>
             <td class="right">
+              <button class="btn small" data-em="${c.id}" data-emv="${esc(c.email || '')}">Email</button>
               <button class="btn small" data-pw="${c.id}">Reset Password</button>
               <button class="btn small danger" data-del="${c.id}">Delete</button>
             </td>
@@ -795,6 +854,7 @@ async function renderCustomers() {
         <div class="full"><label class="f">Customer / Company Name *</label><input class="f" name="name" required /></div>
         <div><label class="f">Login Username *</label><input class="f" name="username" required /></div>
         <div><label class="f">Login Password *</label><input class="f" name="password" required /></div>
+        <div class="full"><label class="f">Email (optional — gets notified when you add documents or photos)</label><input class="f" name="email" type="email" /></div>
         <div class="modal-actions full">
           <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
           <button type="submit" class="btn gold">Add Customer</button>
@@ -818,6 +878,14 @@ async function renderCustomers() {
       alert('Password updated.');
     })
   );
+  document.querySelectorAll('[data-em]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const em = prompt('Customer email (leave empty to remove):', b.dataset.emv || '');
+      if (em === null) return;
+      await api('/api/customers/' + b.dataset.em, { method: 'PUT', json: { email: em } });
+      renderCustomers();
+    })
+  );
   document.querySelectorAll('[data-del]').forEach((b) =>
     b.addEventListener('click', async () => {
       if (!confirm('Delete this customer login? Their jobs stay but become unassigned.')) return;
@@ -828,6 +896,24 @@ async function renderCustomers() {
 }
 
 /* ---------- photo lightbox ---------- */
+/* Convert iPhone HEIC/HEIF photos to JPEG in the browser where possible
+ * (Safari can decode them; other browsers keep the original file). */
+async function heicToJpeg(file) {
+  if (!/\.(heic|heif)$/i.test(file.name)) return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 2560 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bmp.width * scale));
+    c.height = Math.max(1, Math.round(bmp.height * scale));
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close();
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+    if (!blob) return file;
+    return new File([blob], file.name.replace(/\.(heic|heif)$/i, '.jpg'), { type: 'image/jpeg' });
+  } catch { return file; }
+}
+
 /* Make a small JPEG thumbnail in the browser before uploading (returns null if the
  * image can't be decoded, e.g. HEIC on some browsers — the full photo is used then). */
 async function makeThumb(file, maxDim = 480) {
