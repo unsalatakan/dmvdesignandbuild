@@ -37,11 +37,11 @@ function showLogin() {
 function showApp() {
   $('#loginView').classList.add('hidden');
   $('#appView').classList.remove('hidden');
-  $('#whoami').textContent = ME.name + (ME.role === 'admin' ? ' (Admin)' : '');
-  const links = [['#/home', 'Home'], ['#/jobs', ME.role === 'admin' ? 'Jobs' : 'My Jobs']];
-  if (ME.role === 'admin') links.push(['#/orders', 'Orders']);
+  $('#whoami').textContent = ME.name + (ME.role === 'admin' ? ' (Admin)' : ME.role === 'pm' ? ' (Project Manager)' : '');
+  const links = [['#/home', 'Home'], ['#/jobs', ME.role === 'customer' ? 'My Jobs' : 'Jobs']];
+  if (ME.role !== 'customer') links.push(['#/orders', 'Orders']);
   links.push(['#/photos', 'Photos']);
-  if (ME.role === 'admin') links.push(['#/customers', 'Customers']);
+  if (ME.role === 'admin') links.push(['#/customers', 'Customers'], ['#/managers', 'Managers']);
   $('#navLinks').innerHTML = links.map(([h, t]) => `<a href="${h}" data-h="${h}">${t}</a>`).join('');
   if (!location.hash || location.hash === '#/') location.hash = '#/home';
   route();
@@ -111,7 +111,8 @@ function route() {
   const jobMatch = h.match(/^#\/job\/(\d+)/);
   if (jobMatch) return renderJob(Number(jobMatch[1]));
   if (h.startsWith('#/jobs')) return renderJobs();
-  if (h.startsWith('#/orders') && ME.role === 'admin') return renderOrders();
+  if (h.startsWith('#/orders') && ME.role !== 'customer') return renderOrders();
+  if (h.startsWith('#/managers') && ME.role === 'admin') return renderManagers();
   if (h.startsWith('#/photos')) return renderPhotos();
   if (h.startsWith('#/customers') && ME.role === 'admin') return renderCustomers();
   renderHome();
@@ -182,7 +183,7 @@ function financeChartSVG(projects) {
 async function renderHome() {
   const projects = await api('/api/projects');
   const totalValue = projects.reduce((s, p) => s + (p.price || 0), 0);
-  const isAdmin = ME.role === 'admin';
+  const isAdmin = ME.role !== 'customer'; // admin or project manager
   const received = isAdmin ? projects.reduce((s, p) => s + (p.payments || []).reduce((a, x) => a + (x.amount || 0), 0), 0) : null;
   const toOrder = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).length, 0) : null;
   const toOrderCost = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).reduce((a, m) => a + (m.price || 0) * (m.qty || 1), 0), 0) : null;
@@ -348,7 +349,7 @@ window.addEventListener('hashchange', () => { $('#mapFull').classList.add('hidde
 let jobsFilter = 'all', jobsQuery = '';
 async function renderJobs() {
   const projects = await api('/api/projects');
-  const isAdmin = ME.role === 'admin';
+  const isAdmin = ME.role !== 'customer'; // admin or project manager
   const card = (p) => `
       <div class="job-card" onclick="location.hash='#/job/${p.id}'">
         <h4>${esc(p.name)}</h4>
@@ -357,6 +358,7 @@ async function renderJobs() {
           <span><b>${money(p.price)}</b></span>
           <span>Starts <b>${fmtDate(p.startDate)}</b></span>
           ${statusBadge(p)}
+          ${isAdmin && p.pmName ? `<span class="badge" style="background:#2c6bd7;color:#fff">👷 ${esc(p.pmName)}</span>` : ''}
         </div>
         ${isAdmin ? `<div class="job-meta" style="margin-top:8px">
           <span>${(p.materials || []).filter((m) => !m.ordered).length} materials to order</span>
@@ -397,7 +399,7 @@ async function renderJobs() {
   $('#main').innerHTML = `
     <div class="page-head">
       <h1>${isAdmin ? 'Jobs' : 'My Jobs'}</h1>
-      ${isAdmin ? '<button class="btn gold" id="newProjBtn">+ New Project</button>' : ''}
+      ${ME.role === 'admin' ? '<button class="btn gold" id="newProjBtn">+ New Project</button>' : ''}
     </div>
     ${isAdmin ? `
     <div class="jobs-controls">
@@ -408,7 +410,7 @@ async function renderJobs() {
     </div>` : ''}
     <div id="jobsList">${buildBody()}</div>`;
   if (isAdmin) {
-    $('#newProjBtn').addEventListener('click', () => projectModal());
+    if (ME.role === 'admin') $('#newProjBtn').addEventListener('click', () => projectModal());
     $('#jobsSearch').addEventListener('input', (e) => { jobsQuery = e.target.value; $('#jobsList').innerHTML = buildBody(); });
     document.querySelectorAll('[data-jf]').forEach((b) =>
       b.addEventListener('click', () => {
@@ -499,6 +501,7 @@ async function renderPhotos() {
 /* ---------- PROJECT CREATE / EDIT MODAL ---------- */
 async function projectModal(p) {
   const customers = await api('/api/customers');
+  const pms = await api('/api/pms');
   const isEdit = !!p;
   openModal(`
     <h2>${isEdit ? 'Edit Project' : 'New Project'}</h2>
@@ -516,6 +519,12 @@ async function projectModal(p) {
         <select class="f" name="customerId">
           <option value="">— No customer assigned —</option>
           ${customers.map((c) => `<option value="${c.id}" ${isEdit && p.customerId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="full"><label class="f">Project Manager</label>
+        <select class="f" name="pmId">
+          <option value="">— No manager assigned —</option>
+          ${pms.map((c) => `<option value="${c.id}" ${isEdit && p.pmId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
         </select>
       </div>
       <div><label class="f">Contract ${isEdit && p.contractName ? '(current: ' + esc(p.contractName) + ')' : ''}</label><input class="f" name="contract" type="file" /></div>
@@ -545,7 +554,7 @@ async function renderJob(id) {
   let p;
   try { p = await api('/api/projects/' + id); }
   catch { $('#main').innerHTML = '<div class="panel">Job not found.</div>'; return; }
-  const isAdmin = ME.role === 'admin';
+  const isAdmin = ME.role !== 'customer'; // admin or project manager
   const mats = p.materials || [];
   const toOrder = mats.filter((m) => !m.ordered);
   const totAll = mats.reduce((s, m) => s + m.price * (m.qty || 1), 0);
@@ -570,7 +579,7 @@ async function renderJob(id) {
     <div class="page-head">
       <h1>${esc(p.name)}</h1>
       <div>
-        ${isAdmin ? `<button class="btn" id="editProjBtn">Edit</button> <button class="btn danger" id="delProjBtn">Delete</button>` : ''}
+        ${isAdmin ? `<button class="btn" id="editProjBtn">Edit</button>` : ''}${ME.role === 'admin' ? ` <button class="btn danger" id="delProjBtn">Delete</button>` : ''}
       </div>
     </div>
 
@@ -759,7 +768,7 @@ async function renderJob(id) {
   );
 
   $('#editProjBtn').addEventListener('click', () => projectModal(p));
-  $('#delProjBtn').addEventListener('click', async () => {
+  if ($('#delProjBtn')) $('#delProjBtn').addEventListener('click', async () => {
     if (!confirm('Delete this project? This cannot be undone.')) return;
     await api('/api/projects/' + id, { method: 'DELETE' });
     location.hash = '#/jobs';
@@ -891,6 +900,80 @@ async function renderCustomers() {
       if (!confirm('Delete this customer login? Their jobs stay but become unassigned.')) return;
       await api('/api/customers/' + b.dataset.del, { method: 'DELETE' });
       renderCustomers();
+    })
+  );
+}
+
+/* ---------- PROJECT MANAGERS (admin) ---------- */
+async function renderManagers() {
+  const pms = await api('/api/pms');
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>Project Managers</h1>
+      <button class="btn gold" id="newPmBtn">+ Add Manager</button>
+    </div>
+    <div class="panel">
+      ${pms.length ? `
+      <table>
+        <thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Jobs</th><th class="right">Actions</th></tr></thead>
+        <tbody>${pms.map((c) => `
+          <tr>
+            <td><b>${esc(c.name)}</b></td>
+            <td>${esc(c.username)}</td>
+            <td>${c.email ? esc(c.email) : '<span class="muted">—</span>'}</td>
+            <td>${c.projectCount}</td>
+            <td class="right">
+              <button class="btn small" data-pmem="${c.id}" data-pmemv="${esc(c.email || '')}">Email</button>
+              <button class="btn small" data-pmpw="${c.id}">Reset Password</button>
+              <button class="btn small danger" data-pmdel="${c.id}">Delete</button>
+            </td>
+          </tr>`).join('')}</tbody>
+      </table>` : '<div class="muted">No project managers yet. Add one and assign them to jobs — they will only see the jobs assigned to them.</div>'}
+    </div>`;
+  $('#newPmBtn').addEventListener('click', () => {
+    openModal(`
+      <h2>Add Project Manager</h2>
+      <form id="pmForm" class="form-grid">
+        <div class="full"><label class="f">Full Name *</label><input class="f" name="name" required /></div>
+        <div><label class="f">Login Username *</label><input class="f" name="username" required /></div>
+        <div><label class="f">Login Password *</label><input class="f" name="password" required /></div>
+        <div class="full"><label class="f">Email (optional)</label><input class="f" name="email" type="email" /></div>
+        <div class="modal-actions full">
+          <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn gold">Add Manager</button>
+        </div>
+        <div class="error full" id="pmErr"></div>
+      </form>`);
+    $('#pmForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await api('/api/pms', { method: 'POST', json: Object.fromEntries(fd) });
+        closeModal(); renderManagers();
+      } catch (err) { $('#pmErr').textContent = err.message; }
+    });
+  });
+  document.querySelectorAll('[data-pmpw]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const pw = prompt('New password for this manager:');
+      if (!pw) return;
+      await api('/api/pms/' + b.dataset.pmpw, { method: 'PUT', json: { password: pw } });
+      alert('Password updated.');
+    })
+  );
+  document.querySelectorAll('[data-pmem]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const em = prompt('Manager email (leave empty to remove):', b.dataset.pmemv || '');
+      if (em === null) return;
+      await api('/api/pms/' + b.dataset.pmem, { method: 'PUT', json: { email: em } });
+      renderManagers();
+    })
+  );
+  document.querySelectorAll('[data-pmdel]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Delete this manager login? Their jobs stay but become unassigned.')) return;
+      await api('/api/pms/' + b.dataset.pmdel, { method: 'DELETE' });
+      renderManagers();
     })
   );
 }

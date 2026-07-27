@@ -516,14 +516,20 @@ async function geocode(address) {
 /* ================= API handlers ================= */
 function projectOut(p, user) {
   const customer = db.users.find((u) => u.id === p.customerId);
-  const base = { ...p, customerName: customer ? customer.name : null };
+  const pm = db.users.find((u) => u.id === p.pmId && u.role === 'pm');
+  const base = { ...p, customerName: customer ? customer.name : null, pmName: pm ? pm.name : null };
   if (user.role === 'customer') { const { materials, notes, payments, ...rest } = base; return rest; }
   return base;
+}
+function canAccess(p, user) {
+  if (user.role === 'admin') return true;
+  if (user.role === 'pm') return p.pmId === user.id;
+  return p.customerId === user.id;
 }
 function findProject(id, user) {
   const p = db.projects.find((x) => x.id === Number(id));
   if (!p) return { error: [404, 'Project not found'] };
-  if (user.role !== 'admin' && p.customerId !== user.id) return { error: [403, 'No access'] };
+  if (!canAccess(p, user)) return { error: [403, 'No access'] };
   return { p };
 }
 
@@ -560,7 +566,7 @@ route('GET', /^\/api\/customers$/, (req, res, m, b, user) => {
   json(res, 200, db.users.filter((u) => u.role === 'customer').map(({ password, ...u }) => ({
     ...u, projectCount: db.projects.filter((p) => p.customerId === u.id).length,
   })));
-}, { admin: true });
+}, { staff: true });
 
 route('POST', /^\/api\/customers$/, (req, res, m, body) => {
   const { name, username, password, email } = body || {};
@@ -590,9 +596,44 @@ route('DELETE', /^\/api\/customers\/(\d+)$/, (req, res, m) => {
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
 
+/* project managers */
+route('GET', /^\/api\/pms$/, (req, res, m, b, user) => {
+  json(res, 200, db.users.filter((u) => u.role === 'pm').map(({ password, ...u }) => ({
+    ...u, projectCount: db.projects.filter((p) => p.pmId === u.id).length,
+  })));
+}, { staff: true });
+
+route('POST', /^\/api\/pms$/, (req, res, m, body) => {
+  const { name, username, password, email } = body || {};
+  if (!name || !username || !password) return json(res, 400, { error: 'Name, username and password are required' });
+  const uname = String(username).trim().toLowerCase();
+  if (db.users.some((u) => u.username === uname)) return json(res, 400, { error: 'Username already exists' });
+  const c = { id: nextId(), username: uname, password: hash(password), role: 'pm', name: String(name).trim(), email: email ? String(email).trim() : null };
+  db.users.push(c); saveDb();
+  const { password: _, ...out } = c;
+  json(res, 200, out);
+}, { admin: true });
+
+route('PUT', /^\/api\/pms\/(\d+)$/, (req, res, m, body) => {
+  const c = db.users.find((u) => u.id === Number(m[1]) && u.role === 'pm');
+  if (!c) return json(res, 404, { error: 'Project manager not found' });
+  if (body.name) c.name = String(body.name).trim();
+  if (body.password) c.password = hash(body.password);
+  if (body.email !== undefined) c.email = String(body.email || '').trim() || null;
+  saveDb();
+  const { password: _, ...out } = c;
+  json(res, 200, out);
+}, { admin: true });
+
+route('DELETE', /^\/api\/pms\/(\d+)$/, (req, res, m) => {
+  db.users = db.users.filter((u) => !(u.id === Number(m[1]) && u.role === 'pm'));
+  db.projects.forEach((p) => { if (p.pmId === Number(m[1])) p.pmId = null; });
+  saveDb(); json(res, 200, { ok: true });
+}, { admin: true });
+
 /* projects */
 route('GET', /^\/api\/projects$/, (req, res, m, b, user) => {
-  const list = user.role === 'admin' ? db.projects : db.projects.filter((p) => p.customerId === user.id);
+  const list = db.projects.filter((p) => canAccess(p, user));
   json(res, 200, list.map((p) => projectOut(p, user)));
 });
 
@@ -615,6 +656,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     startDate: fields.startDate || null,
     status: ['upcoming', 'active', 'done'].includes(fields.status) ? fields.status : 'active',
     customerId: fields.customerId ? Number(fields.customerId) : null,
+    pmId: fields.pmId ? Number(fields.pmId) : null,
     lat: geo.lat, lng: geo.lng,
     contractFile: files.contract ? files.contract.filename : null,
     contractName: files.contract ? files.contract.originalname : null,
@@ -637,6 +679,7 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
   if (fields.startDate !== undefined) p.startDate = fields.startDate || null;
   if (fields.status !== undefined && ['upcoming', 'active', 'done'].includes(fields.status)) p.status = fields.status;
   if (fields.customerId !== undefined) p.customerId = fields.customerId ? Number(fields.customerId) : null;
+  if (fields.pmId !== undefined) p.pmId = fields.pmId ? Number(fields.pmId) : null;
   if (fields.address && fields.address !== p.address) {
     p.address = fields.address;
     const geo = await geocode(fields.address);
@@ -647,7 +690,7 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
   saveDb();
   if (files.contract || files.plan) notifyCustomer(p, 'doc', 'New documents were uploaded to your project "' + p.name + '".');
   json(res, 200, projectOut(p, user));
-}, { admin: true, multipart: true });
+}, { staff: true, multipart: true });
 
 route('DELETE', /^\/api\/projects\/(\d+)$/, (req, res, m) => {
   db.projects = db.projects.filter((p) => p.id !== Number(m[1]));
@@ -674,7 +717,7 @@ route('POST', /^\/api\/projects\/(\d+)\/materials$/, (req, res, m, body, user) =
   p.materialFileName = file.originalname;
   saveDb();
   json(res, 200, projectOut(p, user));
-}, { admin: true, multipart: true });
+}, { staff: true, multipart: true });
 
 route('PUT', /^\/api\/projects\/(\d+)\/materials\/(\d+)$/, (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
@@ -686,7 +729,7 @@ route('PUT', /^\/api\/projects\/(\d+)\/materials\/(\d+)$/, (req, res, m, body, u
     mat.orderedAt = mat.ordered ? new Date().toISOString() : null;
   }
   saveDb(); json(res, 200, mat);
-}, { admin: true });
+}, { staff: true });
 
 /* notes */
 route('POST', /^\/api\/projects\/(\d+)\/notes$/, (req, res, m, body, user) => {
@@ -695,7 +738,7 @@ route('POST', /^\/api\/projects\/(\d+)\/notes$/, (req, res, m, body, user) => {
   if (!body.text || !String(body.text).trim()) return json(res, 400, { error: 'Note text required' });
   const n = { id: nextId(), text: String(body.text).trim(), done: false, created: new Date().toISOString() };
   p.notes.push(n); saveDb(); json(res, 200, n);
-}, { admin: true });
+}, { staff: true });
 
 route('PUT', /^\/api\/projects\/(\d+)\/notes\/(\d+)$/, (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
@@ -705,14 +748,14 @@ route('PUT', /^\/api\/projects\/(\d+)\/notes\/(\d+)$/, (req, res, m, body, user)
   if (body.done !== undefined) n.done = !!body.done;
   if (body.text !== undefined) n.text = String(body.text).trim();
   saveDb(); json(res, 200, n);
-}, { admin: true });
+}, { staff: true });
 
 route('DELETE', /^\/api\/projects\/(\d+)\/notes\/(\d+)$/, (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
   if (error) return json(res, error[0], { error: error[1] });
   p.notes = p.notes.filter((x) => x.id !== Number(m[2]));
   saveDb(); json(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 /* payments */
 route('POST', /^\/api\/projects\/(\d+)\/payments$/, (req, res, m, body, user) => {
@@ -729,14 +772,14 @@ route('POST', /^\/api\/projects\/(\d+)\/payments$/, (req, res, m, body, user) =>
     created: new Date().toISOString(),
   };
   p.payments.push(pay); saveDb(); json(res, 200, pay);
-}, { admin: true });
+}, { staff: true });
 
 route('DELETE', /^\/api\/projects\/(\d+)\/payments\/(\d+)$/, (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
   if (error) return json(res, error[0], { error: error[1] });
   p.payments = (p.payments || []).filter((x) => x.id !== Number(m[2]));
   saveDb(); json(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 /* photos */
 route('POST', /^\/api\/projects\/(\d+)\/photos$/, async (req, res, m, body, user) => {
@@ -753,7 +796,7 @@ route('POST', /^\/api\/projects\/(\d+)\/photos$/, async (req, res, m, body, user
   p.photos.push(ph); saveDb();
   notifyCustomer(p, 'photo', 'New photos were just added to your project "' + p.name + '".');
   json(res, 200, ph);
-}, { admin: true, multipart: true });
+}, { staff: true, multipart: true });
 
 route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
@@ -762,13 +805,13 @@ route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, b
   if (ph) { await deleteFile(ph.file); if (ph.thumb) await deleteFile(ph.thumb); }
   p.photos = (p.photos || []).filter((x) => x.id !== Number(m[2]));
   saveDb(); json(res, 200, { ok: true });
-}, { admin: true });
+}, { staff: true });
 
 /* protected file downloads */
 route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
   const name = path.basename(decodeURIComponent(m[1]));
   const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name) || (p.photos || []).some((ph) => ph.file === name || ph.thumb === name));
-  if (user.role !== 'admin' && (!owner || owner.customerId !== user.id)) return json(res, 403, { error: 'No access' });
+  if (!owner || !canAccess(owner, user)) return json(res, 403, { error: 'No access' });
   const fp = path.join(UPLOAD_DIR, name);
   if (fs.existsSync(fp)) {
     res.writeHead(200, { 'Content-Type': FILE_TYPES[path.extname(name).toLowerCase()] || 'application/octet-stream' });
@@ -800,6 +843,7 @@ const server = http.createServer(async (req, res) => {
       if (!m) continue;
       if (!r.public && !user) return json(res, 401, { error: 'Not logged in' });
       if (r.admin && (!user || user.role !== 'admin')) return json(res, 403, { error: 'Admins only' });
+      if (r.staff && (!user || user.role === 'customer')) return json(res, 403, { error: 'Staff only' });
       let body = null;
       if (req.method === 'POST' || req.method === 'PUT') {
         const raw = await readBody(req);
