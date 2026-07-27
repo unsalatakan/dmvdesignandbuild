@@ -831,6 +831,33 @@ function serveStatic(req, res, urlPath) {
   fs.createReadStream(fp).pipe(res);
 }
 
+/* ================= daily database backups =================
+ * Copies db.json to R2 (backups/db-YYYY-MM-DD.json) on boot and every 24h.
+ * Keeps ~30 days: each run deletes the copy from 31 days ago.
+ * Without R2 configured, backs up to a local backups/ folder instead. */
+async function backupDb() {
+  try {
+    if (!fs.existsSync(DATA_FILE)) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const data = fs.readFileSync(DATA_FILE);
+    if (R2) {
+      await r2Request('PUT', 'backups/db-' + today + '.json', data, 'application/json');
+      const old = new Date(Date.now() - 31 * 86400000).toISOString().slice(0, 10);
+      await r2Request('DELETE', 'backups/db-' + old + '.json');
+      console.log('Database backed up to R2: backups/db-' + today + '.json');
+    } else {
+      const dir = path.join(STORAGE_DIR, 'backups');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'db-' + today + '.json'), data);
+      const files = fs.readdirSync(dir).filter((f) => /^db-.*\.json$/.test(f)).sort();
+      while (files.length > 30) fs.unlinkSync(path.join(dir, files.shift()));
+      console.log('Database backed up locally: backups/db-' + today + '.json');
+    }
+  } catch (e) { console.error('Backup failed:', e.message); }
+}
+backupDb();
+setInterval(backupDb, 24 * 60 * 60 * 1000);
+
 const server = http.createServer(async (req, res) => {
   try {
     const urlPath = decodeURI(req.url.split('?')[0]);
