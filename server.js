@@ -19,6 +19,82 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
+/* ================= Cloudflare R2 file storage (optional) =================
+ * Set these env vars to store uploads in R2 instead of the local disk:
+ *   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
+ * If they are not set, files are stored locally (good for local dev). */
+const R2 = (process.env.R2_ACCOUNT_ID && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_BUCKET)
+  ? {
+      accountId: process.env.R2_ACCOUNT_ID,
+      accessKey: process.env.R2_ACCESS_KEY_ID,
+      secret: process.env.R2_SECRET_ACCESS_KEY,
+      bucket: process.env.R2_BUCKET,
+    }
+  : null;
+const R2_HOST = R2 ? R2.accountId + '.r2.cloudflarestorage.com' : null;
+
+const FILE_TYPES = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.heic': 'image/heic', '.heif': 'image/heif', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+
+const sha256hex = (d) => crypto.createHash('sha256').update(d).digest('hex');
+const hmacBuf = (k, d) => crypto.createHmac('sha256', k).update(d).digest();
+
+function amzDates() {
+  const amzdate = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+  return { amzdate, datestamp: amzdate.slice(0, 8) };
+}
+function r2SigningKey(datestamp) {
+  return hmacBuf(hmacBuf(hmacBuf(hmacBuf('AWS4' + R2.secret, datestamp), 'auto'), 's3'), 'aws4_request');
+}
+
+/* Signed request to R2 (AWS Signature V4, no SDK needed). */
+async function r2Request(method, key, body = null, contentType = null) {
+  const { amzdate, datestamp } = amzDates();
+  const payloadHash = sha256hex(body || '');
+  const uri = '/' + R2.bucket + '/' + key;
+  const signHdrs = { host: R2_HOST, 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzdate };
+  if (contentType) signHdrs['content-type'] = contentType;
+  const names = Object.keys(signHdrs).sort();
+  const canonical = [method, uri, '', names.map((n) => n + ':' + signHdrs[n] + '\n').join(''), names.join(';'), payloadHash].join('\n');
+  const scope = datestamp + '/auto/s3/aws4_request';
+  const sts = ['AWS4-HMAC-SHA256', amzdate, scope, sha256hex(canonical)].join('\n');
+  const sig = hmacBuf(r2SigningKey(datestamp), sts).toString('hex');
+  const headers = { 'x-amz-content-sha256': payloadHash, 'x-amz-date': amzdate, authorization: 'AWS4-HMAC-SHA256 Credential=' + R2.accessKey + '/' + scope + ', SignedHeaders=' + names.join(';') + ', Signature=' + sig };
+  if (contentType) headers['content-type'] = contentType;
+  const resp = await fetch('https://' + R2_HOST + uri, { method, headers, body: body || undefined });
+  if (!resp.ok && resp.status !== 404) throw new Error('R2 ' + method + ' failed (' + resp.status + ')');
+  return resp;
+}
+
+/* Short-lived presigned download URL (browser fetches straight from R2). */
+function r2PresignGet(key, expires = 300) {
+  const { amzdate, datestamp } = amzDates();
+  const scope = datestamp + '/auto/s3/aws4_request';
+  const q = [
+    ['X-Amz-Algorithm', 'AWS4-HMAC-SHA256'],
+    ['X-Amz-Credential', R2.accessKey + '/' + scope],
+    ['X-Amz-Date', amzdate],
+    ['X-Amz-Expires', String(expires)],
+    ['X-Amz-SignedHeaders', 'host'],
+  ].map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).sort().join('&');
+  const uri = '/' + R2.bucket + '/' + key;
+  const canonical = ['GET', uri, q, 'host:' + R2_HOST + '\n', 'host', 'UNSIGNED-PAYLOAD'].join('\n');
+  const sts = ['AWS4-HMAC-SHA256', amzdate, scope, sha256hex(canonical)].join('\n');
+  const sig = hmacBuf(r2SigningKey(datestamp), sts).toString('hex');
+  return 'https://' + R2_HOST + uri + '?' + q + '&X-Amz-Signature=' + sig;
+}
+
+/* Store / delete an uploaded file (R2 when configured, local disk otherwise). */
+async function storeFile(f) {
+  if (!f) return;
+  const type = FILE_TYPES[path.extname(f.filename).toLowerCase()] || 'application/octet-stream';
+  if (R2) await r2Request('PUT', f.filename, f.buffer, type);
+  else fs.writeFileSync(path.join(UPLOAD_DIR, f.filename), f.buffer);
+}
+async function deleteFile(name) {
+  if (R2) { try { await r2Request('DELETE', name); } catch {} }
+  try { fs.unlinkSync(path.join(UPLOAD_DIR, name)); } catch {}
+}
+
 /* ================= tiny JSON database ================= */
 const hash = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 let db;
@@ -96,7 +172,6 @@ function parseMultipart(buf, contentType) {
         if (fileM && fileM[1]) {
           const original = fileM[1];
           const safe = Date.now() + '_' + crypto.randomBytes(3).toString('hex') + '_' + original.replace(/[^a-zA-Z0-9._-]/g, '_');
-          fs.writeFileSync(path.join(UPLOAD_DIR, safe), body);
           files[nameM[1]] = { filename: safe, originalname: original, size: body.length, buffer: body };
         } else if (!fileM) {
           fields[nameM[1]] = body.toString('utf8');
@@ -430,6 +505,8 @@ route('GET', /^\/api\/projects\/(\d+)$/, (req, res, m, b, user) => {
 route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
   const { fields, files } = body;
   if (!fields.name || !fields.address) return json(res, 400, { error: 'Name and address are required' });
+  await storeFile(files.contract);
+  await storeFile(files.plan);
   const geo = await geocode(fields.address);
   const p = {
     id: nextId(),
@@ -462,8 +539,8 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
     const geo = await geocode(fields.address);
     p.lat = geo.lat; p.lng = geo.lng;
   }
-  if (files.contract) { p.contractFile = files.contract.filename; p.contractName = files.contract.originalname; }
-  if (files.plan) { p.planFile = files.plan.filename; p.planName = files.plan.originalname; }
+  if (files.contract) { await storeFile(files.contract); p.contractFile = files.contract.filename; p.contractName = files.contract.originalname; }
+  if (files.plan) { await storeFile(files.plan); p.planFile = files.plan.filename; p.planName = files.plan.originalname; }
   saveDb();
   json(res, 200, projectOut(p, user));
 }, { admin: true, multipart: true });
@@ -558,22 +635,23 @@ route('DELETE', /^\/api\/projects\/(\d+)\/payments\/(\d+)$/, (req, res, m, body,
 }, { admin: true });
 
 /* photos */
-route('POST', /^\/api\/projects\/(\d+)\/photos$/, (req, res, m, body, user) => {
+route('POST', /^\/api\/projects\/(\d+)\/photos$/, async (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
   if (error) return json(res, error[0], { error: error[1] });
   const f = body.files.photo;
   if (!f) return json(res, 400, { error: 'No photo uploaded' });
   if (!/\.(png|jpe?g|gif|webp|heic|heif)$/i.test(f.originalname)) return json(res, 400, { error: 'Only image files are allowed' });
+  await storeFile(f);
   p.photos = p.photos || [];
   const ph = { id: nextId(), file: f.filename, name: f.originalname, uploaded: new Date().toISOString() };
   p.photos.push(ph); saveDb(); json(res, 200, ph);
 }, { admin: true, multipart: true });
 
-route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, (req, res, m, body, user) => {
+route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
   if (error) return json(res, error[0], { error: error[1] });
   const ph = (p.photos || []).find((x) => x.id === Number(m[2]));
-  if (ph) { try { fs.unlinkSync(path.join(UPLOAD_DIR, ph.file)); } catch {} }
+  if (ph) await deleteFile(ph.file);
   p.photos = (p.photos || []).filter((x) => x.id !== Number(m[2]));
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
@@ -584,11 +662,12 @@ route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
   const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name) || (p.photos || []).some((ph) => ph.file === name));
   if (user.role !== 'admin' && (!owner || owner.customerId !== user.id)) return json(res, 403, { error: 'No access' });
   const fp = path.join(UPLOAD_DIR, name);
-  if (!fs.existsSync(fp)) return json(res, 404, { error: 'File not found' });
-  const ext = path.extname(name).toLowerCase();
-  const types = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.heic': 'image/heic', '.heif': 'image/heif', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
-  res.writeHead(200, { 'Content-Type': types[ext] || 'application/octet-stream' });
-  fs.createReadStream(fp).pipe(res);
+  if (fs.existsSync(fp)) {
+    res.writeHead(200, { 'Content-Type': FILE_TYPES[path.extname(name).toLowerCase()] || 'application/octet-stream' });
+    return fs.createReadStream(fp).pipe(res);
+  }
+  if (R2) { res.writeHead(302, { Location: r2PresignGet(name) }); return res.end(); }
+  return json(res, 404, { error: 'File not found' });
 });
 
 /* ================= static files + server ================= */
