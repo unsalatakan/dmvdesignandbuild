@@ -150,11 +150,48 @@ function loginBlocked(ip) {
   const a = loginAttempts.get(ip);
   return a && a.until > Date.now();
 }
-function loginFailed(ip) {
+function loginFailed(ip, username) {
   const a = loginAttempts.get(ip) || { count: 0, until: 0 };
   a.count++;
-  if (a.count >= 5) { a.until = Date.now() + 15 * 60 * 1000; a.count = 0; }
+  if (a.count >= 5) { a.until = Date.now() + 15 * 60 * 1000; a.count = 0; sendLoginAlert(ip, username); }
   loginAttempts.set(ip, a);
+}
+
+/* ================= security alert emails =================
+ * Sends an email (via Resend, https://resend.com) when an IP gets blocked
+ * for repeated failed logins. Set env var RESEND_API_KEY to enable.
+ * Optional: ALERT_EMAIL (recipient), RESEND_FROM (verified sender). */
+const ALERT_EMAIL = process.env.ALERT_EMAIL || 'info@dmv-designandbuild.com';
+const RESEND_FROM = process.env.RESEND_FROM || 'DMV Portal Security <onboarding@resend.dev>';
+const alertsSent = new Map(); // ip -> last alert timestamp (max 1 email per IP per hour)
+async function sendLoginAlert(ip, username) {
+  if (!process.env.RESEND_API_KEY) return;
+  if ((alertsSent.get(ip) || 0) > Date.now() - 60 * 60 * 1000) return;
+  alertsSent.set(ip, Date.now());
+  let loc = 'Unknown';
+  try {
+    const r = await fetch('https://ipwho.is/' + encodeURIComponent(ip), { signal: AbortSignal.timeout(6000) });
+    const j = await r.json();
+    if (j && j.success) loc = [j.city, j.region, j.country].filter(Boolean).join(', ') + (j.connection && j.connection.isp ? ' — ' + j.connection.isp : '');
+  } catch {}
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + process.env.RESEND_API_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        from: RESEND_FROM,
+        to: [ALERT_EMAIL],
+        subject: '⚠ Portal security: repeated failed logins blocked (' + ip + ')',
+        text: 'Someone was blocked after 5 failed login attempts on the portal.\n\n'
+          + 'IP address: ' + ip + '\n'
+          + 'Location: ' + loc + '\n'
+          + 'Last username tried: ' + (username || '(empty)') + '\n'
+          + 'Time: ' + new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' (ET)\n\n'
+          + 'The IP is blocked for 15 minutes. If these alerts keep coming, consider changing your passwords.',
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (e) { console.error('Security alert email failed:', e.message); }
 }
 
 /* ================= helpers ================= */
@@ -479,7 +516,7 @@ route('POST', /^\/api\/login$/, async (req, res, m, body) => {
   if (loginBlocked(ip)) return json(res, 429, { error: 'Too many failed attempts. Please wait 15 minutes and try again.' });
   const { username, password } = body || {};
   const u = db.users.find((x) => x.username === String(username || '').trim().toLowerCase() && x.password === hash(password || ''));
-  if (!u) { loginFailed(ip); return json(res, 401, { error: 'Invalid username or password' }); }
+  if (!u) { loginFailed(ip, String(username || '')); return json(res, 401, { error: 'Invalid username or password' }); }
   loginAttempts.delete(ip);
   const user = { id: u.id, username: u.username, role: u.role, name: u.name };
   createSession(res, user);
