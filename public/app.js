@@ -159,8 +159,7 @@ async function renderHome() {
   const toOrderCost = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).reduce((a, m) => a + (m.price || 0) * (m.qty || 1), 0), 0) : null;
   const recentPhotos = projects
     .flatMap((p) => (p.photos || []).map((ph) => ({ ...ph, projectName: p.name, projectId: p.id })))
-    .sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)))
-    .slice(0, 8);
+    .sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
   $('#main').innerHTML = `
     ${isAdmin ? '' : `<div class="page-head"><h1>Welcome, ${esc(ME.name)}</h1></div>`}
     <div class="cards">
@@ -210,14 +209,9 @@ async function renderHome() {
       })()}
     </div>
     </div>` : ''}
-    <div class="panel map-card" id="mapCard">
-      <h3>Job Map</h3>
-      <div class="map-hint">Click map to expand ⛶</div>
-      <div id="homemap"></div>
-    </div>
     ${recentPhotos.length ? `
     <div class="panel">
-      <h3>Latest Photos</h3>
+      <h3>Photos <span class="muted" style="font-size:13px">— ${recentPhotos.length}</span></h3>
       <div class="photo-grid">
         ${recentPhotos.map((ph, i) => `
         <div class="photo-item" data-rview="${i}">
@@ -225,7 +219,12 @@ async function renderHome() {
           <a class="photo-tag" href="#/job/${ph.projectId}" onclick="event.stopPropagation()">${esc(ph.projectName)}</a>
         </div>`).join('')}
       </div>
-    </div>` : ''}`;
+    </div>` : ''}
+    <div class="panel map-card" id="mapCard">
+      <h3>Job Map</h3>
+      <div class="map-hint">Click map to expand ⛶</div>
+      <div id="homemap"></div>
+    </div>`;
   document.querySelectorAll('input[data-hnote]').forEach((cb) =>
     cb.addEventListener('change', async () => {
       const [pid, nid] = cb.dataset.hnote.split(':');
