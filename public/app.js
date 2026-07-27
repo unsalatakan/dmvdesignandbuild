@@ -1,6 +1,7 @@
 /* DMV Design and Build — portal frontend */
 let ME = null;
 let homeMap = null, bigMap = null;
+let todoTab = 'open'; // which tab of the home to-do panel is selected
 
 const $ = (s) => document.querySelector(s);
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -178,22 +179,34 @@ async function renderHome() {
       ${financeChartSVG(projects)}
     </div>
     <div class="panel todo-panel">
-      <h3>To-Do — All Jobs</h3>
       ${(() => {
-        const jobs = projects.filter((p) => (p.notes || []).length);
-        if (!jobs.length) return '<div class="muted">No to-do items yet. Add notes on a job page and they will show up here.</div>';
-        return jobs.map((p) => {
-          const open = p.notes.filter((n) => !n.done).length;
-          return `
+        const openCount = projects.reduce((s, p) => s + (p.notes || []).filter((n) => !n.done).length, 0);
+        const doneCount = projects.reduce((s, p) => s + (p.notes || []).filter((n) => n.done).length, 0);
+        const list = (done) => {
+          const jobs = projects
+            .map((p) => ({ ...p, shown: (p.notes || []).filter((n) => !!n.done === done) }))
+            .filter((p) => p.shown.length);
+          if (!jobs.length) return `<div class="muted">${done ? 'Nothing completed yet.' : 'No open to-do items. Add notes on a job page and they will show up here.'}</div>`;
+          return jobs.map((p) => `
           <div class="todo-job">
-            <h4><a href="#/job/${p.id}">${esc(p.name)}</a> <span class="muted">— ${open ? open + ' open' : 'all done ✓'}</span></h4>
-            ${p.notes.map((n) => `
+            <h4><a href="#/job/${p.id}">${esc(p.name)}</a> <span class="muted">— ${p.shown.length} ${done ? 'completed' : 'open'}</span></h4>
+            ${p.shown.map((n) => `
             <div class="note-row ${n.done ? 'done' : ''}">
               <input type="checkbox" data-hnote="${p.id}:${n.id}" ${n.done ? 'checked' : ''} />
               <span class="note-text">${esc(n.text)}</span>
             </div>`).join('')}
-          </div>`;
-        }).join('');
+          </div>`).join('');
+        };
+        return `
+      <div class="todo-head">
+        <h3>To-Do — All Jobs</h3>
+        <div class="todo-tabs">
+          <button class="todo-tab ${todoTab === 'open' ? 'active' : ''}" data-ttab="open">Open${openCount ? ' (' + openCount + ')' : ''}</button>
+          <button class="todo-tab ${todoTab === 'done' ? 'active' : ''}" data-ttab="done">Completed${doneCount ? ' (' + doneCount + ')' : ''}</button>
+        </div>
+      </div>
+      <div ${todoTab === 'open' ? '' : 'hidden'} data-tpane="open">${list(false)}</div>
+      <div ${todoTab === 'done' ? '' : 'hidden'} data-tpane="done">${list(true)}</div>`;
       })()}
     </div>
     </div>` : ''}
@@ -218,6 +231,13 @@ async function renderHome() {
       const [pid, nid] = cb.dataset.hnote.split(':');
       await api(`/api/projects/${pid}/notes/${nid}`, { method: 'PUT', json: { done: cb.checked } });
       renderHome();
+    })
+  );
+  document.querySelectorAll('.todo-tab').forEach((b) =>
+    b.addEventListener('click', () => {
+      todoTab = b.dataset.ttab;
+      document.querySelectorAll('.todo-tab').forEach((x) => x.classList.toggle('active', x === b));
+      document.querySelectorAll('[data-tpane]').forEach((p) => (p.hidden = p.dataset.tpane !== todoTab));
     })
   );
   homeMap = drawMap('homemap', projects, false);

@@ -305,3 +305,10 @@ html.light .chart-panel h3 { color: var(--muted); }
 .cust-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid var(--gold); }
 .cust-head h3 { font-size: 16px; color: #fff; letter-spacing: 0.4px; text-shadow: 0 1px 3px rgba(0,0,0,0.3); }
 .cust-head .muted { font-size: 13px; }
+
+/* home to-do tabs */
+.todo-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.todo-head h3 { margin-bottom: 0; }
+.todo-tabs { display: flex; gap: 6px; }
+.todo-tab { border: 1px solid rgba(128,128,128,0.35); background: transparent; color: inherit; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
+.todo-tab.active { background: var(--gold); border-color: var(--gold); color: #fff; }
