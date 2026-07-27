@@ -102,29 +102,59 @@ function nextId() { return db.seq++; }
 function loadDb() {
   if (fs.existsSync(DATA_FILE)) db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   else db = { users: [], projects: [], seq: 1 };
+  if (!db.sessions) db.sessions = {};
   if (!db.users.some((u) => u.role === 'admin')) {
     db.users.push({ id: nextId(), username: 'dmv', password: hash('dmv123'), role: 'admin', name: 'DMV Design and Build' });
     saveDb();
   }
 }
-function saveDb() { fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2)); }
+/* Atomic save: write to a temp file first, then rename over the real one,
+ * so a crash mid-write can never corrupt the database. */
+function saveDb() {
+  const tmp = DATA_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
+  fs.renameSync(tmp, DATA_FILE);
+}
 loadDb();
 
-/* ================= sessions ================= */
-const sessions = new Map(); // sid -> user
+/* ================= sessions (stored in db so logins survive deploys) ================= */
+const SESSION_TTL = 1000 * 60 * 60 * 24 * 7; // 7 days
+function pruneSessions() {
+  const now = Date.now();
+  for (const sid of Object.keys(db.sessions)) if (db.sessions[sid].expires < now) delete db.sessions[sid];
+}
 function getSession(req) {
   const m = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
-  return m ? sessions.get(m[1]) || null : null;
+  if (!m) return null;
+  const s = db.sessions[m[1]];
+  if (!s || s.expires < Date.now()) return null;
+  const u = db.users.find((x) => x.id === s.userId);
+  return u ? { id: u.id, username: u.username, role: u.role, name: u.name } : null;
 }
 function createSession(res, user) {
   const sid = crypto.randomBytes(24).toString('hex');
-  sessions.set(sid, user);
-  res.setHeader('Set-Cookie', `sid=${sid}; HttpOnly; Path=/; Max-Age=${60 * 60 * 12}; SameSite=Lax`);
+  pruneSessions();
+  db.sessions[sid] = { userId: user.id, expires: Date.now() + SESSION_TTL };
+  saveDb();
+  res.setHeader('Set-Cookie', `sid=${sid}; HttpOnly; Path=/; Max-Age=${SESSION_TTL / 1000}; SameSite=Lax`);
 }
 function destroySession(req, res) {
   const m = /(?:^|;\s*)sid=([a-f0-9]+)/.exec(req.headers.cookie || '');
-  if (m) sessions.delete(m[1]);
+  if (m && db.sessions[m[1]]) { delete db.sessions[m[1]]; saveDb(); }
   res.setHeader('Set-Cookie', 'sid=; HttpOnly; Path=/; Max-Age=0');
+}
+
+/* ================= login rate limiting ================= */
+const loginAttempts = new Map(); // ip -> { count, until }
+function loginBlocked(ip) {
+  const a = loginAttempts.get(ip);
+  return a && a.until > Date.now();
+}
+function loginFailed(ip) {
+  const a = loginAttempts.get(ip) || { count: 0, until: 0 };
+  a.count++;
+  if (a.count >= 5) { a.until = Date.now() + 15 * 60 * 1000; a.count = 0; }
+  loginAttempts.set(ip, a);
 }
 
 /* ================= helpers ================= */
@@ -445,9 +475,12 @@ const routes = [];
 function route(method, pattern, handler, opts = {}) { routes.push({ method, pattern, handler, ...opts }); }
 
 route('POST', /^\/api\/login$/, async (req, res, m, body) => {
+  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress || '?';
+  if (loginBlocked(ip)) return json(res, 429, { error: 'Too many failed attempts. Please wait 15 minutes and try again.' });
   const { username, password } = body || {};
   const u = db.users.find((x) => x.username === String(username || '').trim().toLowerCase() && x.password === hash(password || ''));
-  if (!u) return json(res, 401, { error: 'Invalid username or password' });
+  if (!u) { loginFailed(ip); return json(res, 401, { error: 'Invalid username or password' }); }
+  loginAttempts.delete(ip);
   const user = { id: u.id, username: u.username, role: u.role, name: u.name };
   createSession(res, user);
   json(res, 200, user);
@@ -642,8 +675,10 @@ route('POST', /^\/api\/projects\/(\d+)\/photos$/, async (req, res, m, body, user
   if (!f) return json(res, 400, { error: 'No photo uploaded' });
   if (!/\.(png|jpe?g|gif|webp|heic|heif)$/i.test(f.originalname)) return json(res, 400, { error: 'Only image files are allowed' });
   await storeFile(f);
+  const t = body.files.thumb && /\.(jpe?g|png|webp)$/i.test(body.files.thumb.filename) ? body.files.thumb : null;
+  if (t) await storeFile(t);
   p.photos = p.photos || [];
-  const ph = { id: nextId(), file: f.filename, name: f.originalname, uploaded: new Date().toISOString() };
+  const ph = { id: nextId(), file: f.filename, thumb: t ? t.filename : null, name: f.originalname, uploaded: new Date().toISOString() };
   p.photos.push(ph); saveDb(); json(res, 200, ph);
 }, { admin: true, multipart: true });
 
@@ -651,7 +686,7 @@ route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, b
   const { p, error } = findProject(m[1], user);
   if (error) return json(res, error[0], { error: error[1] });
   const ph = (p.photos || []).find((x) => x.id === Number(m[2]));
-  if (ph) await deleteFile(ph.file);
+  if (ph) { await deleteFile(ph.file); if (ph.thumb) await deleteFile(ph.thumb); }
   p.photos = (p.photos || []).filter((x) => x.id !== Number(m[2]));
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
@@ -659,7 +694,7 @@ route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, b
 /* protected file downloads */
 route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
   const name = path.basename(decodeURIComponent(m[1]));
-  const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name) || (p.photos || []).some((ph) => ph.file === name));
+  const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name) || (p.photos || []).some((ph) => ph.file === name || ph.thumb === name));
   if (user.role !== 'admin' && (!owner || owner.customerId !== user.id)) return json(res, 403, { error: 'No access' });
   const fp = path.join(UPLOAD_DIR, name);
   if (fs.existsSync(fp)) {

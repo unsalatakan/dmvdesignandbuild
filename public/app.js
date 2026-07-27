@@ -215,7 +215,7 @@ async function renderHome() {
       <div class="photo-grid" id="homePhotoGrid">
         ${recentPhotos.map((ph, i) => `
         <div class="photo-item" data-rview="${i}">
-          <img src="/api/file/${ph.file}" alt="${esc(ph.name)}" loading="lazy" />
+          <img src="/api/file/${ph.thumb || ph.file}" alt="${esc(ph.name)}" loading="lazy" />
           <a class="photo-tag" href="#/job/${ph.projectId}" onclick="event.stopPropagation()">${esc(ph.projectName)}</a>
         </div>`).join('')}
       </div>
@@ -436,7 +436,7 @@ async function renderPhotos() {
       <div class="photo-grid">
         ${p.photos.map((ph, i) => `
         <div class="photo-item" data-pj="${ji}" data-pi="${i}">
-          <img src="/api/file/${ph.file}" alt="${esc(ph.name)}" loading="lazy" />
+          <img src="/api/file/${ph.thumb || ph.file}" alt="${esc(ph.name)}" loading="lazy" />
         </div>`).join('')}
       </div>
     </div>`).join('') : '<div class="panel muted">No photos yet. Upload photos on a job page and they will show up here.</div>'}`;
@@ -550,7 +550,7 @@ async function renderJob(id) {
       <div class="photo-grid" id="jobPhotoGrid">
         ${p.photos.map((ph) => `
         <div class="photo-item" data-view="${p.photos.indexOf(ph)}">
-          <img src="/api/file/${ph.file}" alt="${esc(ph.name)}" loading="lazy" />
+          <img src="/api/file/${ph.thumb || ph.file}" alt="${esc(ph.name)}" loading="lazy" />
           ${isAdmin ? `<button class="photo-del" data-delphoto="${ph.id}" title="Delete photo">✕</button>` : ''}
         </div>`).join('')}
       </div>
@@ -685,6 +685,8 @@ async function renderJob(id) {
         btn.textContent = `Uploading ${i + 1} of ${files.length}…`;
         const fd = new FormData();
         fd.append('photo', files[i]);
+        const th = await makeThumb(files[i]);
+        if (th) fd.append('thumb', th, 'thumb.jpg');
         await api(`/api/projects/${id}/photos`, { method: 'POST', body: fd });
       }
       renderJob(id);
@@ -826,6 +828,21 @@ async function renderCustomers() {
 }
 
 /* ---------- photo lightbox ---------- */
+/* Make a small JPEG thumbnail in the browser before uploading (returns null if the
+ * image can't be decoded, e.g. HEIC on some browsers — the full photo is used then). */
+async function makeThumb(file, maxDim = 480) {
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bmp.width * scale));
+    c.height = Math.max(1, Math.round(bmp.height * scale));
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close();
+    return await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.78));
+  } catch { return null; }
+}
+
 function openLightbox(photos, startIdx) {
   if (!photos.length) return;
   let idx = startIdx;
