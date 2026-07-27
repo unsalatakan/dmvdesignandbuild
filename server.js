@@ -166,20 +166,21 @@ const RESEND_FROM = process.env.RESEND_FROM || 'DMV Portal Security <onboarding@
 const alertsSent = new Map(); // ip -> last alert timestamp (max 1 email per IP per hour)
 
 async function sendEmail(to, subject, text) {
-  if (!process.env.RESEND_API_KEY || !to) return;
+  if (!process.env.RESEND_API_KEY) { console.log('Email skipped (RESEND_API_KEY not set):', subject); return; }
+  if (!to) return;
+  console.log('Sending email to', to, '—', subject);
   try {
     await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { authorization: 'Bearer ' + process.env.RESEND_API_KEY, 'content-type': 'application/json' },
       body: JSON.stringify({ from: RESEND_FROM, to: [to], subject, text }),
       signal: AbortSignal.timeout(8000),
-    });
+    }).then(async (r) => { if (!r.ok) console.error('Email rejected by Resend (' + r.status + '):', await r.text()); else console.log('Email sent to', to); });
   } catch (e) { console.error('Email failed:', e.message); }
 }
 
 async function sendLoginAlert(ip, username) {
-  if (!process.env.RESEND_API_KEY) return;
-  if ((alertsSent.get(ip) || 0) > Date.now() - 60 * 60 * 1000) return;
+  if ((alertsSent.get(ip) || 0) > Date.now() - 60 * 60 * 1000) { console.log('Login alert throttled for', ip); return; }
   alertsSent.set(ip, Date.now());
   let loc = 'Unknown';
   try {
@@ -820,5 +821,7 @@ server.listen(PORT, () => {
   console.log('');
   console.log('  DMV Design and Build — Project Portal');
   console.log('  Running at:  http://localhost:' + PORT);
+  console.log('  Storage: ' + (R2 ? 'Cloudflare R2 (bucket: ' + R2.bucket + ')' : 'local disk'));
+  console.log('  Email: ' + (process.env.RESEND_API_KEY ? 'enabled, sending as ' + RESEND_FROM : 'DISABLED — RESEND_API_KEY not set'));
   console.log('');
 });
