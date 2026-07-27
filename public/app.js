@@ -547,13 +547,14 @@ async function renderJob(id) {
         <span class="muted"> You can select several at once.</span>
       </div>` : ''}
       ${(p.photos || []).length ? `
-      <div class="photo-grid">
+      <div class="photo-grid" id="jobPhotoGrid">
         ${p.photos.map((ph) => `
         <div class="photo-item" data-view="${p.photos.indexOf(ph)}">
           <img src="/api/file/${ph.file}" alt="${esc(ph.name)}" loading="lazy" />
           ${isAdmin ? `<button class="photo-del" data-delphoto="${ph.id}" title="Delete photo">✕</button>` : ''}
         </div>`).join('')}
-      </div>` : '<div class="muted">No photos yet.</div>'}
+      </div>
+      <a href="javascript:void(0)" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">Show all ${p.photos.length} photos ↓</a>` : '<div class="muted">No photos yet.</div>'}
     </div>
 
     ${isAdmin ? `
@@ -647,6 +648,28 @@ async function renderJob(id) {
       openLightbox(p.photos || [], Number(d.dataset.view));
     })
   );
+
+  // cap the photo grid at 2 rows until "Show all" is clicked
+  const jpg = document.getElementById('jobPhotoGrid');
+  const jpMore = document.getElementById('jobPhotosMore');
+  if (jpg && jpMore) {
+    let expanded = false;
+    const capRows = () => {
+      if (!document.body.contains(jpg)) { window.removeEventListener('resize', capRows); return; }
+      if (expanded) return;
+      const cols = getComputedStyle(jpg).gridTemplateColumns.split(' ').length;
+      const max = cols * 2;
+      [...jpg.children].forEach((el, i) => (el.style.display = i < max ? '' : 'none'));
+      jpMore.style.display = jpg.children.length > max ? 'block' : 'none';
+    };
+    jpMore.addEventListener('click', () => {
+      expanded = true;
+      [...jpg.children].forEach((el) => (el.style.display = ''));
+      jpMore.style.display = 'none';
+    });
+    capRows();
+    window.addEventListener('resize', capRows);
+  }
 
   if (!isAdmin) return;
 
