@@ -4,7 +4,14 @@ let homeMap = null, bigMap = null;
 let todoTab = 'open'; // which tab of the home to-do panel is selected
 
 /* job statuses */
-const STATUS = { upcoming: ['Upcoming', '#8a63d2'], active: ['In Progress', '#1d9d5c'], done: ['Completed', '#64748b'] };
+const STATUS = { talks: ['In Talks', '#d99417'], upcoming: ['Upcoming', '#8a63d2'], active: ['In Progress', '#1d9d5c'], done: ['Completed', '#64748b'] };
+/* order + wording used by the Jobs page overview table */
+const STATUS_TABLE = [
+  ['active', 'Ongoing Jobs', 'Work is underway on site'],
+  ['upcoming', 'Signed — Starting Soon', 'Contract signed, not started yet'],
+  ['talks', 'In Talks — Not Signed', 'Quoted or in discussion, no contract yet'],
+  ['done', 'Completed', 'Finished and closed out'],
+];
 const statusOf = (p) => (STATUS[p.status] ? p.status : 'active');
 const statusBadge = (p) => { const [label, color] = STATUS[statusOf(p)]; return `<span class="badge" style="background:${color};color:#fff">${label}</span>`; };
 
@@ -398,11 +405,51 @@ async function renderJobs() {
     }).join('');
   };
   const chip = (k, label) => `<button class="todo-tab ${jobsFilter === k ? 'active' : ''}" data-jf="${k}">${label}</button>`;
+
+  /* overview table — always shows every job, independent of the filter chips below */
+  const overview = () => {
+    const groups = STATUS_TABLE
+      .map(([key, title, note]) => ({ key, title, note, items: projects.filter((p) => statusOf(p) === key) }))
+      .filter((g) => g.key !== 'done' || g.items.length);
+    return `
+    <div class="panel">
+      <h3>Job Status Overview</h3>
+      <div class="status-summary">
+        ${groups.map((g) => `<div class="status-sum" style="border-left-color:${STATUS[g.key][1]}">
+          <div class="n">${g.items.length}</div>
+          <div class="l">${g.title}</div>
+          <div class="v">${money(g.items.reduce((s, p) => s + (p.price || 0), 0))}</div>
+        </div>`).join('')}
+      </div>
+      <table>
+        <thead><tr>
+          <th>Status</th><th>Job</th><th>Address</th><th class="right">Price</th><th>Start Date</th><th>Customer</th>
+        </tr></thead>
+        <tbody>
+          ${groups.map((g) => `
+            <tr class="totals-row"><td colspan="6">${g.title} — ${g.items.length} job${g.items.length === 1 ? '' : 's'} <span class="muted">· ${g.note}</span></td></tr>
+            ${g.items.length ? g.items.map((p) => `
+            <tr>
+              <td>${statusBadge(p)}</td>
+              <td><a href="#/job/${p.id}">${esc(p.name)}</a></td>
+              <td>${esc(p.address)}</td>
+              <td class="right">${money(p.price)}</td>
+              <td>${fmtDate(p.startDate)}</td>
+              <td>${p.customerName ? esc(p.customerName) : '<span class="muted">—</span>'}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="6" class="muted">None right now.</td></tr>'}
+          `).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  };
+
   $('#main').innerHTML = `
     <div class="page-head">
       <h1>${isAdmin ? 'Jobs' : 'My Jobs'}</h1>
       ${ME.role === 'admin' ? '<button class="btn gold" id="newProjBtn">+ New Project</button>' : ''}
     </div>
+    ${isAdmin && projects.length ? overview() : ''}
     ${isAdmin ? `
     <div class="jobs-controls">
       <input type="search" id="jobsSearch" placeholder="Search jobs by name, address or customer…" value="${esc(jobsQuery)}" />

@@ -313,6 +313,15 @@ html.light .chart-panel h3 { color: var(--muted); }
 .todo-tab { border: 1px solid rgba(128,128,128,0.35); background: transparent; color: inherit; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; }
 .todo-tab.active { background: var(--gold); border-color: var(--gold); color: #fff; }
 
+/* jobs page — status overview table */
+.status-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.status-sum { border-radius: 10px; padding: 14px 16px; border-left: 4px solid var(--muted); background: #f6f7f9; }
+.status-sum .n { font-size: 26px; font-weight: 800; line-height: 1.1; }
+.status-sum .l { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin: 2px 0 6px; }
+.status-sum .v { font-size: 14px; font-weight: 700; }
+html:not(.light) .status-sum { background: rgba(255,255,255,0.05); }
+.totals-row td .muted { font-weight: 500; }
+
 /* jobs page controls */
 .jobs-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
 .jobs-controls input[type=search] { flex: 1; min-width: 220px; padding: 9px 14px; border-radius: 8px; border: 1px solid rgba(128,128,128,0.35); background: rgba(255,255,255,0.06); color: inherit; font-size: 14px; }

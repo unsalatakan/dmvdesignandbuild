@@ -654,7 +654,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     name: fields.name, address: fields.address,
     price: Number(fields.price) || 0,
     startDate: fields.startDate || null,
-    status: ['upcoming', 'active', 'done'].includes(fields.status) ? fields.status : 'active',
+    status: ['talks', 'upcoming', 'active', 'done'].includes(fields.status) ? fields.status : 'active',
     customerId: fields.customerId ? Number(fields.customerId) : null,
     pmId: fields.pmId ? Number(fields.pmId) : null,
     lat: geo.lat, lng: geo.lng,
@@ -677,7 +677,7 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
   if (fields.name) p.name = fields.name;
   if (fields.price !== undefined) p.price = Number(fields.price) || 0;
   if (fields.startDate !== undefined) p.startDate = fields.startDate || null;
-  if (fields.status !== undefined && ['upcoming', 'active', 'done'].includes(fields.status)) p.status = fields.status;
+  if (fields.status !== undefined && ['talks', 'upcoming', 'active', 'done'].includes(fields.status)) p.status = fields.status;
   if (fields.customerId !== undefined) p.customerId = fields.customerId ? Number(fields.customerId) : null;
   if (fields.pmId !== undefined) p.pmId = fields.pmId ? Number(fields.pmId) : null;
   if (fields.address && fields.address !== p.address) {
