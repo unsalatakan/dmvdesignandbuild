@@ -16,8 +16,10 @@ Then open **http://localhost:3000** in your browser.
 ## What it does
 
 - **Home** — dashboard with job count, total contract value, materials still to order, and a map of all jobs. Click the map to expand it full-page; click a pin to open that job.
-- **Jobs** — create projects with name, address, price, contract upload, arch plan PDF upload, start date, and assigned customer. The address is automatically located on the map (needs internet).
-- **Job page** — upload your Excel material list, check off materials as you order them, see per-item and total prices plus the "still to order" total. Add notes / to-do items per job.
+- **Jobs** — create projects with name, address, lockbox code, price, contract upload, arch plan PDF upload, start date, and assigned customer. The address is automatically located on the map (needs internet).
+- **Job page** — lockbox code (tap it to copy), Excel material list upload, check off materials as you order them, see per-item and total prices plus the "still to order" total. Add notes / to-do items per job.
+- **Addresses are tappable** — anywhere an address shows (job cards, job page, jobs table, map pins), tapping it opens Apple Maps on iPhone, your map app of choice on Android, and Google Maps on a computer.
+- **Photos** — tap **Take Photo** as many times as you want; each shot lands in a staging tray on the page. Drop any bad shots, then tap **Upload All** once to send the whole batch. **Choose Photos** picks several from the camera roll at once.
 - **Customers** — create customer logins. Customers see only their own jobs (name, address, price, start date, contract and plan files) — not your material lists or internal notes. One customer can have many jobs.
 
 ## Material list Excel format

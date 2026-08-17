@@ -20,6 +20,28 @@ const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFra
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (d) => (d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
 
+/* ---------- open an address in the device's native maps app ---------- */
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_ANDROID = /Android/.test(navigator.userAgent);
+/* Builds the best "open in maps" URL for this device.
+ * iOS -> Apple Maps · Android -> geo: (lets the user pick Google Maps/Waze) · desktop -> Google Maps in a tab. */
+function mapsUrl(address, lat, lng) {
+  const q = encodeURIComponent(address || '');
+  const hasPin = lat != null && lng != null;
+  // maps.apple.com is a universal link: iOS hands it straight to the Maps app,
+  // and it still works if it ever gets opened in a plain browser.
+  if (IS_IOS) return 'https://maps.apple.com/?q=' + q + (hasPin ? '&ll=' + lat + ',' + lng : '');
+  if (IS_ANDROID) return hasPin ? `geo:${lat},${lng}?q=${lat},${lng}(${q})` : 'geo:0,0?q=' + q;
+  return 'https://www.google.com/maps/search/?api=1&query=' + (hasPin ? `${lat},${lng}` : q);
+}
+/* Renders an address as a tappable link. Stops click bubbling so it works inside job cards. */
+function addrLink(p, extraClass = '') {
+  const href = mapsUrl(p.address, p.lat, p.lng);
+  const target = IS_ANDROID ? '' : ' target="_blank" rel="noopener"';
+  return `<a class="addr-link ${extraClass}" href="${esc(href)}"${target} onclick="event.stopPropagation()" title="Open in Maps">${esc(p.address)}</a>`;
+}
+
 async function api(url, opts = {}) {
   if (opts.json) {
     opts.body = JSON.stringify(opts.json);
@@ -316,7 +338,7 @@ function drawMap(elId, projects, interactivePopups) {
     group = L.featureGroup(located.map((p) => {
       const [label, color] = STATUS[statusOf(p)];
       const m = L.circleMarker([p.lat, p.lng], { radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).bindPopup(
-        `<div class="map-popup"><a href="#/job/${p.id}">${esc(p.name)}</a><br>${esc(p.address)}<br>Starts: ${fmtDate(p.startDate)}<br><b style="color:${color}">${label}</b></div>`
+        `<div class="map-popup"><a href="#/job/${p.id}">${esc(p.name)}</a><br>${addrLink(p)}<br>Starts: ${fmtDate(p.startDate)}<br><b style="color:${color}">${label}</b></div>`
       );
       return m;
     }));
@@ -362,7 +384,7 @@ async function renderJobs() {
   const card = (p) => `
       <div class="job-card" onclick="location.hash='#/job/${p.id}'">
         <h4>${esc(p.name)}</h4>
-        <div class="addr">📍 ${esc(p.address)}</div>
+        <div class="addr">📍 ${addrLink(p)}</div>
         <div class="job-meta">
           <span><b>${money(p.price)}</b></span>
           <span>Starts <b>${fmtDate(p.startDate)}</b></span>
@@ -432,7 +454,7 @@ async function renderJobs() {
             <tr>
               <td>${statusBadge(p)}</td>
               <td><a href="#/job/${p.id}">${esc(p.name)}</a></td>
-              <td>${esc(p.address)}</td>
+              <td>${addrLink(p)}</td>
               <td class="right">${money(p.price)}</td>
               <td>${fmtDate(p.startDate)}</td>
               <td>${p.customerName ? esc(p.customerName) : '<span class="muted">—</span>'}</td>
@@ -557,6 +579,7 @@ async function projectModal(p) {
     <form id="projForm" class="form-grid">
       <div class="full"><label class="f">Project Name *</label><input class="f" name="name" required value="${isEdit ? esc(p.name) : ''}" /></div>
       <div class="full"><label class="f">Address * (used to pin the job on the map)</label><input class="f" name="address" required value="${isEdit ? esc(p.address) : ''}" /></div>
+      <div class="full"><label class="f">Lockbox Code / Access Info</label><input class="f" name="lockbox" placeholder="e.g. 1234 — back door lockbox" value="${isEdit && p.lockbox ? esc(p.lockbox) : ''}" /></div>
       <div><label class="f">Price ($)</label><input class="f" name="price" type="number" step="0.01" min="0" value="${isEdit ? p.price : ''}" /></div>
       <div><label class="f">Job Start Date</label><input class="f" name="startDate" type="date" value="${isEdit && p.startDate ? p.startDate : ''}" /></div>
       <div><label class="f">Status</label>
@@ -634,7 +657,8 @@ async function renderJob(id) {
 
     <div class="panel">
       <div class="info-grid">
-        <div><div class="k">Address</div><div class="v">${esc(p.address)}</div></div>
+        <div><div class="k">Address</div><div class="v">${addrLink(p, 'addr-big')}</div></div>
+        <div><div class="k">Lockbox Code</div><div class="v">${p.lockbox ? `<span class="lockbox-code" id="lockboxCode" title="Tap to copy">🔒 ${esc(p.lockbox)}</span>` : '<span class="muted">—</span>'}</div></div>
         <div><div class="k">Price</div><div class="v">${money(p.price)}</div></div>
         <div><div class="k">Job Start Date</div><div class="v">${fmtDate(p.startDate)}</div></div>
         <div><div class="k">Customer</div><div class="v">${esc(p.customerName || '—')}</div></div>
@@ -655,11 +679,7 @@ async function renderJob(id) {
     <div class="panel">
       <h3><a class="photo-job-link" href="#/job/${p.id}/photos">Photos${(p.photos || []).length ? ' (' + p.photos.length + ')' : ''} ›</a></h3>
       ${isAdmin ? `
-      <div style="margin-bottom:14px">
-        <input type="file" id="photoFile" accept="image/*" multiple style="display:none" />
-        <button class="btn gold" id="photoUploadBtn">⬆ Upload Photos</button>
-        <span class="muted"> You can select several at once.</span>
-      </div>` : ''}
+      <div style="margin-bottom:14px">${photoUploaderHtml()}</div>` : ''}
       ${(p.photos || []).length ? `
       <div class="photo-grid" id="jobPhotoGrid">
         ${p.photos.map((ph) => `
@@ -755,6 +775,17 @@ async function renderJob(id) {
   // job location map (all users)
   if (p.lat && p.lng) drawMap('jobmap', [p], true);
 
+  // tap the lockbox code to copy it (all users)
+  const lbEl = document.getElementById('lockboxCode');
+  if (lbEl) lbEl.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(p.lockbox);
+      const old = lbEl.textContent;
+      lbEl.textContent = '✓ Copied';
+      setTimeout(() => { lbEl.textContent = old; }, 1200);
+    } catch { /* clipboard blocked — the code is on screen anyway */ }
+  });
+
   // photo viewer (all users)
   document.querySelectorAll('[data-view]').forEach((d) =>
     d.addEventListener('click', (e) => {
@@ -780,26 +811,8 @@ async function renderJob(id) {
 
   if (!isAdmin) return;
 
-  // photo upload / delete
-  $('#photoUploadBtn').addEventListener('click', () => $('#photoFile').click());
-  $('#photoFile').addEventListener('change', async (e) => {
-    const files = [...e.target.files];
-    if (!files.length) return;
-    const btn = $('#photoUploadBtn');
-    btn.disabled = true;
-    try {
-      for (let i = 0; i < files.length; i++) {
-        btn.textContent = `Uploading ${i + 1} of ${files.length}…`;
-        const photo = await heicToJpeg(files[i]);
-        const fd = new FormData();
-        fd.append('photo', photo, photo.name);
-        const th = await makeThumb(photo);
-        if (th) fd.append('thumb', th, 'thumb.jpg');
-        await api(`/api/projects/${id}/photos`, { method: 'POST', body: fd });
-      }
-      renderJob(id);
-    } catch (err) { alert(err.message); renderJob(id); }
-  });
+  wirePhotoUploader(id, () => renderJob(id));
+
   document.querySelectorAll('[data-delphoto]').forEach((b) =>
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -967,11 +980,7 @@ async function renderJobPhotos(id) {
       <a class="btn" href="#/job/${p.id}">← Back to Job</a>
     </div>
     ${isStaff ? `
-    <div style="margin-bottom:18px">
-      <input type="file" id="photoFile" accept="image/*" multiple style="display:none" />
-      <button class="btn gold" id="photoUploadBtn">⬆ Upload Photos</button>
-      <span class="muted"> You can select several at once.</span>
-    </div>` : ''}
+    <div style="margin-bottom:18px">${photoUploaderHtml()}</div>` : ''}
     ${photos.length ? groups.map((g) => `
     <section class="cust-group">
       <div class="cust-head">
@@ -993,25 +1002,8 @@ async function renderJobPhotos(id) {
     })
   );
   if (!isStaff) return;
-  $('#photoUploadBtn').addEventListener('click', () => $('#photoFile').click());
-  $('#photoFile').addEventListener('change', async (e) => {
-    const files = [...e.target.files];
-    if (!files.length) return;
-    const btn = $('#photoUploadBtn');
-    btn.disabled = true;
-    try {
-      for (let i = 0; i < files.length; i++) {
-        btn.textContent = `Uploading ${i + 1} of ${files.length}…`;
-        const photo = await heicToJpeg(files[i]);
-        const fd = new FormData();
-        fd.append('photo', photo, photo.name);
-        const th = await makeThumb(photo);
-        if (th) fd.append('thumb', th, 'thumb.jpg');
-        await api(`/api/projects/${id}/photos`, { method: 'POST', body: fd });
-      }
-      renderJobPhotos(id);
-    } catch (err) { alert(err.message); renderJobPhotos(id); }
-  });
+  wirePhotoUploader(id, () => renderJobPhotos(id));
+
   document.querySelectorAll('[data-delphoto]').forEach((b) =>
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -1128,6 +1120,107 @@ async function makeThumb(file, maxDim = 480) {
     bmp.close();
     return await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.78));
   } catch { return null; }
+}
+
+/* ---------- photo uploader with a staging tray ----------
+ * Shot or picked photos land in a local pending list first. The user keeps adding
+ * (tap Take Photo over and over) and can drop bad shots; nothing reaches the server
+ * until Upload All. Markup + wiring are split so both the job page and the job's
+ * photo page can reuse them. */
+function photoUploaderHtml() {
+  return `
+    <div class="photo-uploader">
+      <input type="file" id="photoCam" accept="image/*" capture="environment" style="display:none" />
+      <input type="file" id="photoFile" accept="image/*" multiple style="display:none" />
+      <div class="photo-add-btns">
+        <button class="btn gold" id="photoCamBtn">📷 Take Photo</button>
+        <button class="btn" id="photoPickBtn">🖼️ Choose Photos</button>
+      </div>
+      <div class="photo-queue hidden" id="photoQueue">
+        <div class="photo-queue-head">
+          <b id="photoQueueCount"></b>
+          <div class="photo-queue-acts">
+            <button class="btn ghost" id="photoQueueClear">Clear</button>
+            <button class="btn gold" id="photoQueueSend">⬆ Upload All</button>
+          </div>
+        </div>
+        <div class="photo-queue-grid" id="photoQueueGrid"></div>
+        <div class="muted photo-queue-hint">Keep tapping <b>Take Photo</b> to add more — nothing uploads until you tap Upload All.</div>
+      </div>
+    </div>`;
+}
+
+function wirePhotoUploader(jobId, onDone) {
+  if (!$('#photoCamBtn')) return;
+  const queue = [];               // { file, url }
+  const qWrap = $('#photoQueue'), qGrid = $('#photoQueueGrid');
+  const qCount = $('#photoQueueCount'), qSend = $('#photoQueueSend'), qClear = $('#photoQueueClear');
+
+  const drawQueue = () => {
+    qWrap.classList.toggle('hidden', !queue.length);
+    if (!queue.length) return;
+    qCount.textContent = `${queue.length} photo${queue.length === 1 ? '' : 's'} ready to upload`;
+    qGrid.innerHTML = queue.map((q, i) => `
+      <div class="photo-item pending">
+        <img src="${q.url}" alt="" />
+        <button class="photo-del" data-qrm="${i}" title="Remove">✕</button>
+      </div>`).join('');
+    qGrid.querySelectorAll('[data-qrm]').forEach((b) =>
+      b.addEventListener('click', () => {
+        const [gone] = queue.splice(Number(b.dataset.qrm), 1);
+        URL.revokeObjectURL(gone.url);
+        drawQueue();
+      }));
+  };
+
+  const addFiles = (files) => {
+    for (const f of files) {
+      if (!f.type.startsWith('image/') && !/\.(heic|heif)$/i.test(f.name)) continue;
+      queue.push({ file: f, url: URL.createObjectURL(f) });
+    }
+    drawQueue();
+  };
+
+  $('#photoCamBtn').addEventListener('click', () => $('#photoCam').click());
+  $('#photoPickBtn').addEventListener('click', () => $('#photoFile').click());
+  // clear .value after each pick so shooting another photo still fires change
+  ['#photoCam', '#photoFile'].forEach((sel) =>
+    $(sel).addEventListener('change', (e) => { addFiles([...e.target.files]); e.target.value = ''; }));
+
+  qClear.addEventListener('click', () => {
+    queue.splice(0).forEach((q) => URL.revokeObjectURL(q.url));
+    drawQueue();
+  });
+
+  qSend.addEventListener('click', async () => {
+    if (!queue.length) return;
+    const jobs = queue.slice();
+    const total = jobs.length;
+    let done = 0;
+    qSend.disabled = qClear.disabled = true;
+    const tick = () => { qSend.textContent = `Uploading ${Math.min(done + 1, total)} of ${total}…`; };
+    tick();
+    const send = async ({ file }) => {
+      const photo = await heicToJpeg(file);
+      const fd = new FormData();
+      fd.append('photo', photo, photo.name || 'photo.jpg');
+      const th = await makeThumb(photo);
+      if (th) fd.append('thumb', th, 'thumb.jpg');
+      await api(`/api/projects/${jobId}/photos`, { method: 'POST', body: fd });
+      done++; tick();
+    };
+    try {
+      let next = 0;   // 3 at a time — quick on wifi, still gentle on a phone's signal
+      await Promise.all([0, 1, 2].map(async () => {
+        while (next < jobs.length) await send(jobs[next++]);
+      }));
+      queue.forEach((q) => URL.revokeObjectURL(q.url));
+      onDone();
+    } catch (err) {
+      alert('Upload failed: ' + err.message + (done ? `\n\n${done} of ${total} photo(s) did make it.` : ''));
+      onDone();
+    }
+  });
 }
 
 function openLightbox(photos, startIdx) {

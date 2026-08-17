@@ -143,6 +143,29 @@ input.f:focus, select.f:focus { outline: 2px solid var(--gold); border-color: tr
 .photo-tag { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, rgba(0,0,0,0.72)); color: #fff; font-size: 12px; font-weight: 600; padding: 14px 8px 6px; text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .photo-tag:hover { text-decoration: underline; }
 
+/* photo uploader — staging tray */
+.photo-add-btns { display: flex; gap: 10px; flex-wrap: wrap; }
+.photo-queue { margin-top: 14px; border: 1px dashed #c9cdd5; border-radius: var(--radius); padding: 12px; background: #f7f9fc; }
+html:not(.light) .photo-queue { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.04); }
+.photo-queue-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.photo-queue-acts { display: flex; gap: 8px; }
+.photo-queue-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.photo-queue-hint { margin-top: 10px; font-size: 12.5px; }
+.photo-item.pending { cursor: default; outline: 2px solid var(--gold); outline-offset: -2px; }
+.photo-item.pending img { opacity: 0.92; }
+
+/* tappable address — opens the phone's maps app */
+.addr-link { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
+.addr-link:hover { color: var(--gold); }
+.addr-big { color: var(--gold); border-bottom: none; }
+.addr-big::after { content: ' ↗'; font-size: 0.85em; opacity: 0.7; }
+html:not(.light) .addr-big { color: #48c684; }
+
+/* lockbox code */
+.lockbox-code { display: inline-block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 1px; background: #eef1f6; border: 1px solid #d8dde6; border-radius: 7px; padding: 3px 10px; cursor: pointer; user-select: all; }
+.lockbox-code:hover { background: #e3e8f0; }
+html:not(.light) .lockbox-code { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.18); }
+
 /* lightbox */
 .lightbox { position: fixed; inset: 0; background: rgba(4,8,15,0.94); z-index: 3000; display: flex; align-items: center; justify-content: center; }
 .lb-img { max-width: 92vw; max-height: 84vh; border-radius: 8px; box-shadow: 0 12px 44px rgba(0,0,0,0.6); }
@@ -327,3 +350,17 @@ html:not(.light) .status-sum { background: rgba(255,255,255,0.05); }
 .jobs-controls input[type=search] { flex: 1; min-width: 220px; padding: 9px 14px; border-radius: 8px; border: 1px solid rgba(128,128,128,0.35); background: rgba(255,255,255,0.06); color: inherit; font-size: 14px; }
 .jobs-controls input[type=search]:focus { outline: 2px solid var(--gold); border-color: transparent; }
 html.light .jobs-controls input[type=search] { background: #fff; }
+
+/* mobile — bigger tap targets for the photo tray and address links */
+@media (max-width: 800px) {
+  .photo-add-btns { gap: 8px; }
+  .photo-add-btns .btn { flex: 1; min-width: 140px; padding: 14px 12px; font-size: 15px; }
+  .photo-queue-head { align-items: flex-start; }
+  .photo-queue-acts { width: 100%; }
+  .photo-queue-acts .btn { flex: 1; padding: 12px; }
+  .photo-queue-grid { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
+  .photo-item.pending .photo-del { width: 30px; height: 30px; font-size: 15px; }
+  .addr-link { padding: 2px 0; }        /* easier to hit with a thumb */
+  .addr-big { font-size: 15.5px; }
+  .lockbox-code { padding: 6px 12px; font-size: 15px; }
+}

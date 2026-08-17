@@ -652,6 +652,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
   const p = {
     id: nextId(),
     name: fields.name, address: fields.address,
+    lockbox: (fields.lockbox || '').trim() || null,
     price: Number(fields.price) || 0,
     startDate: fields.startDate || null,
     status: ['talks', 'upcoming', 'active', 'done'].includes(fields.status) ? fields.status : 'active',
@@ -675,6 +676,7 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
   if (error) return json(res, error[0], { error: error[1] });
   const { fields, files } = body;
   if (fields.name) p.name = fields.name;
+  if (fields.lockbox !== undefined) p.lockbox = (fields.lockbox || '').trim() || null;
   if (fields.price !== undefined) p.price = Number(fields.price) || 0;
   if (fields.startDate !== undefined) p.startDate = fields.startDate || null;
   if (fields.status !== undefined && ['talks', 'upcoming', 'active', 'done'].includes(fields.status)) p.status = fields.status;
