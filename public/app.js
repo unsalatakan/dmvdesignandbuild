@@ -239,7 +239,6 @@ async function renderHome() {
   const totalValue = projects.reduce((s, p) => s + (p.price || 0), 0);
   const isAdmin = ME.role !== 'customer'; // admin or project manager
   const received = isAdmin ? projects.reduce((s, p) => s + (p.payments || []).reduce((a, x) => a + (x.amount || 0), 0), 0) : null;
-  const toOrder = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).length, 0) : null;
   const toOrderCost = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).reduce((a, m) => a + (m.price || 0) * (m.qty || 1), 0), 0) : null;
   // every unpaid scheduled payment across all jobs, soonest first
   const allDues = projects
@@ -255,12 +254,11 @@ async function renderHome() {
     <div class="cards">
       <div class="stat"><div class="num">${projects.length}</div><div class="lbl">${isAdmin ? 'Active Jobs' : 'My Jobs'}</div></div>
       ${isAdmin ? `
-      <div class="stat"><div class="num" style="color:var(--red)">${money(totalValue - received)}</div><div class="lbl">Outstanding</div></div>
+      <div class="stat"><div class="num" style="color:var(--amber)">${money(totalValue - received)}</div><div class="lbl">Outstanding</div></div>
       <div class="stat"><div class="num" style="color:var(--green)">${money(received)}</div><div class="lbl">Received</div></div>` : ''}
       <div class="stat ${overdueCount ? 'stat-alert' : ''}"><div class="num" style="color:${duesTotal ? 'var(--red)' : 'inherit'}">${money(duesTotal)}</div><div class="lbl">Payments Due${overdueCount ? ` — ${overdueCount} overdue` : ''}</div></div>
       <div class="stat"><div class="num">${money(totalValue)}</div><div class="lbl">Total Contract Value</div></div>
-      ${toOrder !== null ? `<div class="stat"><div class="num">${toOrder}</div><div class="lbl">Materials To Order</div></div>
-      <div class="stat"><div class="num">${money(toOrderCost)}</div><div class="lbl">Materials To Order Cost</div></div>` : ''}
+      ${toOrderCost !== null ? `<div class="stat"><div class="num">${money(toOrderCost)}</div><div class="lbl">Materials To Order Cost</div></div>` : ''}
     </div>
     ${allDues.length ? (() => {
       const jobCount = new Set(allDues.map((d) => d.projectId)).size;

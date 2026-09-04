@@ -12,8 +12,11 @@
   --muted: #7a7f8a;
   --green: #1d9d5c;
   --red: #c94040;
+  --amber: #d99417;        /* outstanding / not-yet-a-problem money */
   --radius: 12px;
 }
+/* amber reads too dark on the navy cards — lift it in dark mode */
+html:not(.light) { --amber: #f0b445; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { background: var(--navy); }
 html.light { background: #f5f7fb; }
