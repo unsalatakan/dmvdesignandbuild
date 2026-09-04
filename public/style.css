@@ -157,6 +157,16 @@ html:not(.light) .photo-queue { border-color: rgba(255,255,255,0.2); background:
 .photo-item.pending { cursor: default; outline: 2px solid var(--gold); outline-offset: -2px; }
 .photo-item.pending img { opacity: 0.92; }
 
+/* general to-do — pinned above the per-job items */
+.todo-general { border-left: 3px solid var(--gold); padding-left: 12px; }
+.todo-general h4 { color: var(--gold); }
+.todo-general .note-row { padding-right: 4px; }
+.todo-panel .note-add { margin: 0 0 14px; }
+.todo-panel .note-add input { padding: 9px 12px; border: 1px solid #d8dbe0; border-radius: 8px; font-size: 14px; background: #fff; }
+html:not(.light) .todo-panel .note-add input { background: #0f1a2e; border-color: rgba(255,255,255,0.16); color: #e9eef6; }
+.todo-panel .note-add input:focus { outline: 2px solid var(--gold); border-color: transparent; }
+#gtodoErr { margin: -8px 0 10px; }
+
 /* one-tap contract / arch plan links in tables and job cards */
 .file-cell { white-space: nowrap; }
 .mini-chip { display: inline-flex; align-items: center; gap: 4px; background: #eaf6ef; border: 1px solid #c6e5d3; color: var(--gold-dark); font-weight: 600; font-size: 12px; padding: 4px 9px; border-radius: 6px; text-decoration: none; margin-right: 6px; }

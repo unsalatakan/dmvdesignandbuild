@@ -103,6 +103,7 @@ function loadDb() {
   if (fs.existsSync(DATA_FILE)) db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
   else db = { users: [], projects: [], seq: 1 };
   if (!db.sessions) db.sessions = {};
+  if (!db.todos) db.todos = [];        // general to-do list, not tied to any job
   if (!db.users.some((u) => u.role === 'admin')) {
     db.users.push({ id: nextId(), username: 'dmv', password: hash('dmv123'), role: 'admin', name: 'DMV Design and Build' });
     saveDb();
@@ -518,7 +519,9 @@ function projectOut(p, user) {
   const customer = db.users.find((u) => u.id === p.customerId);
   const pm = db.users.find((u) => u.id === p.pmId && u.role === 'pm');
   const base = { ...p, customerName: customer ? customer.name : null, pmName: pm ? pm.name : null };
-  if (user.role === 'customer') { const { materials, notes, payments, ...rest } = base; return rest; }
+  // customers see the contract price and nothing else money-related:
+  // no material costs, no internal notes, no receipts, no payment schedule
+  if (user.role === 'customer') { const { materials, notes, payments, dues, ...rest } = base; return rest; }
   return base;
 }
 function canAccess(p, user) {
@@ -733,6 +736,34 @@ route('PUT', /^\/api\/projects\/(\d+)\/materials\/(\d+)$/, (req, res, m, body, u
   saveDb(); json(res, 200, mat);
 }, { staff: true });
 
+/* general to-do — admin's own list, not attached to any job */
+route('GET', /^\/api\/todos$/, (req, res) => {
+  json(res, 200, db.todos || []);
+}, { admin: true });
+
+route('POST', /^\/api\/todos$/, (req, res, m, body) => {
+  if (!body.text || !String(body.text).trim()) return json(res, 400, { error: 'To-do text required' });
+  const t = { id: nextId(), text: String(body.text).trim(), done: false, created: new Date().toISOString() };
+  db.todos = db.todos || [];
+  db.todos.push(t); saveDb(); json(res, 200, t);
+}, { admin: true });
+
+route('PUT', /^\/api\/todos\/(\d+)$/, (req, res, m, body) => {
+  const t = (db.todos || []).find((x) => x.id === Number(m[1]));
+  if (!t) return json(res, 404, { error: 'To-do not found' });
+  if (body.done !== undefined) t.done = !!body.done;
+  if (body.text !== undefined) {
+    if (!String(body.text).trim()) return json(res, 400, { error: 'To-do text required' });
+    t.text = String(body.text).trim();
+  }
+  saveDb(); json(res, 200, t);
+}, { admin: true });
+
+route('DELETE', /^\/api\/todos\/(\d+)$/, (req, res, m) => {
+  db.todos = (db.todos || []).filter((x) => x.id !== Number(m[1]));
+  saveDb(); json(res, 200, { ok: true });
+}, { admin: true });
+
 /* notes */
 route('POST', /^\/api\/projects\/(\d+)\/notes$/, (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
@@ -807,8 +838,7 @@ route('POST', /^\/api\/projects\/(\d+)\/dues$/, (req, res, m, body, user) => {
     created: new Date().toISOString(),
   };
   p.dues.push(due); saveDb();
-  notifyCustomer(p, 'due', 'A payment is now scheduled on your project "' + p.name + '".');
-  json(res, 200, due);
+  json(res, 200, due);   // internal only — the customer is deliberately not told
 }, { staff: true });
 
 route('PUT', /^\/api\/projects\/(\d+)\/dues\/(\d+)$/, (req, res, m, body, user) => {

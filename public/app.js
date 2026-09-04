@@ -270,6 +270,8 @@ async function renderHome() {
     .sort((a, b) => (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || String(a.dueDate).localeCompare(String(b.dueDate)));
   const duesTotal = allDues.reduce((s, d) => s + (d.amount || 0), 0);
   const overdueCount = allDues.filter(isOverdue).length;
+  // general to-do list — admin's own, not attached to any job
+  const todos = ME.role === 'admin' ? await api('/api/todos').catch(() => []) : [];
   const recentPhotos = projects
     .flatMap((p) => (p.photos || []).map((ph) => ({ ...ph, projectName: p.name, projectId: p.id })))
     .sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
@@ -280,11 +282,11 @@ async function renderHome() {
       ${isAdmin ? `
       <div class="stat"><div class="num" style="color:var(--amber)">${money(totalValue - received)}</div><div class="lbl">Outstanding</div></div>
       <div class="stat"><div class="num" style="color:var(--green)">${money(received)}</div><div class="lbl">Received</div></div>` : ''}
-      <div class="stat ${overdueCount ? 'stat-alert' : ''}"><div class="num" style="color:${duesTotal ? 'var(--red)' : 'inherit'}">${money(duesTotal)}</div><div class="lbl">Payments Due${overdueCount ? ` — ${overdueCount} overdue` : ''}</div></div>
+      ${isAdmin ? `<div class="stat ${overdueCount ? 'stat-alert' : ''}"><div class="num" style="color:${duesTotal ? 'var(--red)' : 'inherit'}">${money(duesTotal)}</div><div class="lbl">Payments Due${overdueCount ? ` — ${overdueCount} overdue` : ''}</div></div>` : ''}
       <div class="stat"><div class="num">${money(totalValue)}</div><div class="lbl">Total Contract Value</div></div>
       ${toOrderCost !== null ? `<div class="stat"><div class="num">${money(toOrderCost)}</div><div class="lbl">Materials To Order Cost</div></div>` : ''}
     </div>
-    ${allDues.length ? (() => {
+    ${isAdmin && allDues.length ? (() => {
       const jobCount = new Set(allDues.map((d) => d.projectId)).size;
       return `
     <div class="panel">
@@ -312,14 +314,34 @@ async function renderHome() {
     </div>
     <div class="panel todo-panel">
       ${(() => {
-        const openCount = projects.reduce((s, p) => s + (p.notes || []).filter((n) => !n.done).length, 0);
-        const doneCount = projects.reduce((s, p) => s + (p.notes || []).filter((n) => n.done).length, 0);
+        const jobNotes = (done) => projects.reduce((s, p) => s + (p.notes || []).filter((n) => !!n.done === done).length, 0);
+        const openCount = jobNotes(false) + todos.filter((t) => !t.done).length;
+        const doneCount = jobNotes(true) + todos.filter((t) => t.done).length;
+        const isAdminUser = ME.role === 'admin';
+        /* General items sit above the per-job ones, so what isn't tied to a job doesn't get buried. */
+        const generalGroup = (done) => {
+          const shown = todos.filter((t) => !!t.done === done);
+          if (!isAdminUser || !shown.length) return '';
+          return `
+          <div class="todo-job todo-general">
+            <h4>📌 General <span class="muted">— ${shown.length} ${done ? 'completed' : 'open'}</span></h4>
+            ${shown.map((t) => `
+            <div class="note-row ${t.done ? 'done' : ''}">
+              <input type="checkbox" data-gtodo="${t.id}" ${t.done ? 'checked' : ''} />
+              <span class="note-text">${esc(t.text)}</span>
+              <button class="del" data-gdel="${t.id}" title="Delete">✕</button>
+            </div>`).join('')}
+          </div>`;
+        };
         const list = (done) => {
           const jobs = projects
             .map((p) => ({ ...p, shown: (p.notes || []).filter((n) => !!n.done === done) }))
             .filter((p) => p.shown.length);
-          if (!jobs.length) return `<div class="muted">${done ? 'Nothing completed yet.' : 'No open to-do items. Add notes on a job page and they will show up here.'}</div>`;
-          return jobs.map((p) => `
+          const general = generalGroup(done);
+          if (!jobs.length && !general) {
+            return `<div class="muted">${done ? 'Nothing completed yet.' : 'No open to-do items. Add a general one above, or add notes on a job page.'}</div>`;
+          }
+          return general + jobs.map((p) => `
           <div class="todo-job">
             <h4><a href="#/job/${p.id}">${esc(p.name)}</a> <span class="muted">— ${p.shown.length} ${done ? 'completed' : 'open'}</span></h4>
             ${p.shown.map((n) => `
@@ -331,12 +353,18 @@ async function renderHome() {
         };
         return `
       <div class="todo-head">
-        <h3>To-Do — All Jobs</h3>
+        <h3>To-Do</h3>
         <div class="todo-tabs">
           <button class="todo-tab ${todoTab === 'open' ? 'active' : ''}" data-ttab="open">Open${openCount ? ' (' + openCount + ')' : ''}</button>
           <button class="todo-tab ${todoTab === 'done' ? 'active' : ''}" data-ttab="done">Completed${doneCount ? ' (' + doneCount + ')' : ''}</button>
         </div>
       </div>
+      ${isAdminUser ? `
+      <div class="note-add">
+        <input id="gtodoText" placeholder="Add a general to-do — not tied to any job…" />
+        <button class="btn gold" id="gtodoAdd">Add</button>
+      </div>
+      <div class="error" id="gtodoErr"></div>` : ''}
       <div ${todoTab === 'open' ? '' : 'hidden'} data-tpane="open">${list(false)}</div>
       <div ${todoTab === 'done' ? '' : 'hidden'} data-tpane="done">${list(true)}</div>`;
       })()}
@@ -363,6 +391,33 @@ async function renderHome() {
     cb.addEventListener('change', async () => {
       const [pid, nid] = cb.dataset.hnote.split(':');
       await api(`/api/projects/${pid}/notes/${nid}`, { method: 'PUT', json: { done: cb.checked } });
+      renderHome();
+    })
+  );
+
+  // general to-do (admin only)
+  if ($('#gtodoAdd')) {
+    const addTodo = async () => {
+      const text = $('#gtodoText').value.trim();
+      if (!text) return;
+      try {
+        await api('/api/todos', { method: 'POST', json: { text } });
+        renderHome();
+      } catch (err) { $('#gtodoErr').textContent = err.message; }
+    };
+    $('#gtodoAdd').addEventListener('click', addTodo);
+    $('#gtodoText').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTodo(); });
+  }
+  document.querySelectorAll('input[data-gtodo]').forEach((cb) =>
+    cb.addEventListener('change', async () => {
+      await api('/api/todos/' + cb.dataset.gtodo, { method: 'PUT', json: { done: cb.checked } });
+      renderHome();
+    })
+  );
+  document.querySelectorAll('[data-gdel]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Delete this to-do?')) return;
+      await api('/api/todos/' + b.dataset.gdel, { method: 'DELETE' });
       renderHome();
     })
   );
@@ -461,7 +516,7 @@ async function renderJobs() {
           <span><b>${money(p.price)}</b></span>
           <span>Starts <b>${fmtDate(p.startDate)}</b></span>
           ${statusBadge(p)}
-          ${dueTotal(p) ? `<span class="badge ${openDues(p).some(isOverdue) ? 'badge-red' : 'badge-amber'}">${money(dueTotal(p))} due</span>` : ''}
+          ${isAdmin && dueTotal(p) ? `<span class="badge ${openDues(p).some(isOverdue) ? 'badge-red' : 'badge-amber'}">${money(dueTotal(p))} due</span>` : ''}
           ${isAdmin && p.pmName ? `<span class="badge" style="background:#2c6bd7;color:#fff">👷 ${esc(p.pmName)}</span>` : ''}
         </div>
         ${p.lockbox ? `<div class="job-meta" style="margin-top:8px">
@@ -741,7 +796,7 @@ async function renderJob(id) {
       </div>
     </div>
 
-    ${owed ? `
+    ${isAdmin && owed ? `
     <div class="due-banner ${overdueTotal ? 'overdue' : ''}">
       <div class="due-banner-main">
         <div class="due-banner-lbl">${overdueTotal ? '⚠️ Payment Overdue' : 'Payment Due'}</div>
@@ -790,11 +845,12 @@ async function renderJob(id) {
       <a href="#/job/${p.id}/photos" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">View all ${p.photos.length} photos →</a>` : '<div class="muted">No photos yet.</div>'}
     </div>
 
+    ${isAdmin ? `
     <div class="panel">
       <h3>Payment Schedule${owed ? ` <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${money(owed)} still due</span>` : ''}</h3>
       ${dues.length ? `
       <table class="dues-table">
-        <thead><tr><th>Payment</th><th>Due</th><th class="right">Amount</th><th>Status</th>${isAdmin ? '<th style="width:36px"></th>' : ''}</tr></thead>
+        <thead><tr><th>Payment</th><th>Due</th><th class="right">Amount</th><th>Status</th><th style="width:36px"></th></tr></thead>
         <tbody>
           ${dues.map((d) => `
           <tr class="${d.paidOn ? 'ordered' : ''}">
@@ -804,23 +860,22 @@ async function renderJob(id) {
             <td>${d.paidOn
               ? `<span class="badge">✓ Paid ${fmtDate(d.paidOn)}</span>`
               : `<span class="badge ${isOverdue(d) ? 'badge-red' : 'badge-amber'}">${dueWhen(d)}</span>`}</td>
-            ${isAdmin ? `<td class="right">
+            <td class="right">
               <button class="del" data-duepaid="${d.id}" data-now="${d.paidOn ? 1 : 0}" title="${d.paidOn ? 'Mark as unpaid' : 'Mark as paid'}">${d.paidOn ? '↺' : '✓'}</button>
               <button class="del" data-deldue="${d.id}" title="Delete">✕</button>
-            </td>` : ''}
+            </td>
           </tr>`).join('')}
-          ${owed ? `<tr class="totals-row"><td colspan="2">Still due</td><td class="right" style="color:var(--red)">${money(owed)}</td><td colspan="${isAdmin ? 2 : 1}"></td></tr>` : ''}
+          ${owed ? `<tr class="totals-row"><td colspan="2">Still due</td><td class="right" style="color:var(--red)">${money(owed)}</td><td colspan="2"></td></tr>` : ''}
         </tbody>
-      </table>` : `<div class="muted">${isAdmin ? 'No payments scheduled yet. Add one below to start tracking what is owed and when.' : 'No payments scheduled.'}</div>`}
-      ${isAdmin ? `
+      </table>` : '<div class="muted">No payments scheduled yet. Add one below to start tracking what is owed and when.</div>'}
       <div class="form-grid" style="margin-top:16px">
         <div><label class="f">What For (e.g. Deposit, Draw 2, Final)</label><input class="f" id="dueLabel" placeholder="Payment" /></div>
         <div><label class="f">Amount ($)</label><input class="f" id="dueAmount" type="number" step="0.01" min="0" placeholder="0.00" /></div>
         <div><label class="f">Due Date</label><input class="f" id="dueDate" type="date" /></div>
         <div style="display:flex;align-items:flex-end;justify-content:flex-end"><button class="btn gold" id="dueAddBtn">+ Schedule Payment</button></div>
         <div class="error full" id="dueErr"></div>
-      </div>` : ''}
-    </div>
+      </div>
+    </div>` : ''}
 
     ${isAdmin ? `
     <div class="panel">
