@@ -20,6 +20,29 @@ const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFra
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (d) => (d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
 
+/* ---------- scheduled payments ("what's still owed") ----------
+ * dues = [{ id, label, amount, dueDate, paidOn }]. Unpaid entries are what the
+ * job — and the home page — report as due. */
+const todayISO = () => new Date().toISOString().slice(0, 10);
+const openDues = (p) => (p.dues || []).filter((d) => !d.paidOn);
+const dueTotal = (p) => openDues(p).reduce((s, d) => s + (d.amount || 0), 0);
+const isOverdue = (d) => !!(!d.paidOn && d.dueDate && d.dueDate < todayISO());
+/* Plain-English "when" for a due date: Overdue by 3 days / Due today / Due in 5 days. */
+function dueWhen(d) {
+  if (d.paidOn) return 'Paid ' + fmtDate(d.paidOn);
+  if (!d.dueDate) return 'No due date';
+  const days = Math.round((new Date(d.dueDate + 'T00:00:00') - new Date(todayISO() + 'T00:00:00')) / 86400000);
+  if (days < 0) return `Overdue by ${-days} day${days === -1 ? '' : 's'}`;
+  if (days === 0) return 'Due today';
+  if (days === 1) return 'Due tomorrow';
+  return `Due in ${days} days`;
+}
+/* The single next thing to chase on a job: soonest due date first, undated last. */
+function nextDue(p) {
+  return openDues(p).slice().sort((a, b) =>
+    (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || String(a.dueDate).localeCompare(String(b.dueDate)))[0] || null;
+}
+
 /* ---------- open an address in the device's native maps app ---------- */
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -218,6 +241,12 @@ async function renderHome() {
   const received = isAdmin ? projects.reduce((s, p) => s + (p.payments || []).reduce((a, x) => a + (x.amount || 0), 0), 0) : null;
   const toOrder = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).length, 0) : null;
   const toOrderCost = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).reduce((a, m) => a + (m.price || 0) * (m.qty || 1), 0), 0) : null;
+  // every unpaid scheduled payment across all jobs, soonest first
+  const allDues = projects
+    .flatMap((p) => openDues(p).map((d) => ({ ...d, projectName: p.name, projectId: p.id })))
+    .sort((a, b) => (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || String(a.dueDate).localeCompare(String(b.dueDate)));
+  const duesTotal = allDues.reduce((s, d) => s + (d.amount || 0), 0);
+  const overdueCount = allDues.filter(isOverdue).length;
   const recentPhotos = projects
     .flatMap((p) => (p.photos || []).map((ph) => ({ ...ph, projectName: p.name, projectId: p.id })))
     .sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
@@ -228,10 +257,31 @@ async function renderHome() {
       ${isAdmin ? `
       <div class="stat"><div class="num" style="color:var(--red)">${money(totalValue - received)}</div><div class="lbl">Outstanding</div></div>
       <div class="stat"><div class="num" style="color:var(--green)">${money(received)}</div><div class="lbl">Received</div></div>` : ''}
+      <div class="stat ${overdueCount ? 'stat-alert' : ''}"><div class="num" style="color:${duesTotal ? 'var(--red)' : 'inherit'}">${money(duesTotal)}</div><div class="lbl">Payments Due${overdueCount ? ` — ${overdueCount} overdue` : ''}</div></div>
       <div class="stat"><div class="num">${money(totalValue)}</div><div class="lbl">Total Contract Value</div></div>
       ${toOrder !== null ? `<div class="stat"><div class="num">${toOrder}</div><div class="lbl">Materials To Order</div></div>
       <div class="stat"><div class="num">${money(toOrderCost)}</div><div class="lbl">Materials To Order Cost</div></div>` : ''}
     </div>
+    ${allDues.length ? (() => {
+      const jobCount = new Set(allDues.map((d) => d.projectId)).size;
+      return `
+    <div class="panel">
+      <h3>Payments Due <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${money(duesTotal)} across ${jobCount} job${jobCount === 1 ? '' : 's'}</span></h3>
+      <table>
+        <thead><tr><th>Job</th><th>Payment</th><th>Due</th><th class="right">Amount</th><th>Status</th></tr></thead>
+        <tbody>
+          ${allDues.map((d) => `
+          <tr>
+            <td><a href="#/job/${d.projectId}">${esc(d.projectName)}</a></td>
+            <td>${esc(d.label)}</td>
+            <td>${d.dueDate ? fmtDate(d.dueDate) : '<span class="muted">—</span>'}</td>
+            <td class="right"><b>${money(d.amount)}</b></td>
+            <td><span class="badge ${isOverdue(d) ? 'badge-red' : 'badge-amber'}">${dueWhen(d)}</span></td>
+          </tr>`).join('')}
+          <tr class="totals-row"><td colspan="3">Total due</td><td class="right" style="color:var(--red)">${money(duesTotal)}</td><td></td></tr>
+        </tbody>
+      </table>
+    </div>`; })() : ''}
     ${isAdmin ? `
     <div class="home-duo">
     <div class="panel chart-panel">
@@ -389,6 +439,7 @@ async function renderJobs() {
           <span><b>${money(p.price)}</b></span>
           <span>Starts <b>${fmtDate(p.startDate)}</b></span>
           ${statusBadge(p)}
+          ${dueTotal(p) ? `<span class="badge ${openDues(p).some(isOverdue) ? 'badge-red' : 'badge-amber'}">${money(dueTotal(p))} due</span>` : ''}
           ${isAdmin && p.pmName ? `<span class="badge" style="background:#2c6bd7;color:#fff">👷 ${esc(p.pmName)}</span>` : ''}
         </div>
         ${isAdmin ? `<div class="job-meta" style="margin-top:8px">
@@ -646,6 +697,11 @@ async function renderJob(id) {
   const paid = pays.reduce((s, x) => s + (x.amount || 0), 0);
   const balance = (p.price || 0) - paid;
   const today = new Date().toISOString().slice(0, 10);
+  const dues = (p.dues || []).slice().sort((a, b) =>
+    (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || String(a.dueDate).localeCompare(String(b.dueDate)));
+  const owed = dueTotal(p);
+  const next = nextDue(p);
+  const overdueTotal = openDues(p).filter(isOverdue).reduce((s, d) => s + d.amount, 0);
 
   $('#main').innerHTML = `
     <div class="page-head">
@@ -654,6 +710,19 @@ async function renderJob(id) {
         ${isAdmin ? `<button class="btn" id="editProjBtn">Edit</button>` : ''}${ME.role === 'admin' ? ` <button class="btn danger" id="delProjBtn">Delete</button>` : ''}
       </div>
     </div>
+
+    ${owed ? `
+    <div class="due-banner ${overdueTotal ? 'overdue' : ''}">
+      <div class="due-banner-main">
+        <div class="due-banner-lbl">${overdueTotal ? '⚠️ Payment Overdue' : 'Payment Due'}</div>
+        <div class="due-banner-amt">${money(owed)}</div>
+      </div>
+      <div class="due-banner-side">
+        ${next ? `<div><b>${esc(next.label)}</b> — ${money(next.amount)}</div>
+        <div class="due-banner-when">${dueWhen(next)}${next.dueDate ? ' · ' + fmtDate(next.dueDate) : ''}</div>` : ''}
+        ${openDues(p).length > 1 ? `<div class="due-banner-when">${openDues(p).length} payments outstanding</div>` : ''}
+      </div>
+    </div>` : ''}
 
     <div class="panel">
       <div class="info-grid">
@@ -689,6 +758,38 @@ async function renderJob(id) {
         </div>`).join('')}
       </div>
       <a href="#/job/${p.id}/photos" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">View all ${p.photos.length} photos →</a>` : '<div class="muted">No photos yet.</div>'}
+    </div>
+
+    <div class="panel">
+      <h3>Payment Schedule${owed ? ` <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${money(owed)} still due</span>` : ''}</h3>
+      ${dues.length ? `
+      <table class="dues-table">
+        <thead><tr><th>Payment</th><th>Due</th><th class="right">Amount</th><th>Status</th>${isAdmin ? '<th style="width:36px"></th>' : ''}</tr></thead>
+        <tbody>
+          ${dues.map((d) => `
+          <tr class="${d.paidOn ? 'ordered' : ''}">
+            <td><b>${esc(d.label)}</b></td>
+            <td>${d.dueDate ? fmtDate(d.dueDate) : '<span class="muted">—</span>'}</td>
+            <td class="right"><b>${money(d.amount)}</b></td>
+            <td>${d.paidOn
+              ? `<span class="badge">✓ Paid ${fmtDate(d.paidOn)}</span>`
+              : `<span class="badge ${isOverdue(d) ? 'badge-red' : 'badge-amber'}">${dueWhen(d)}</span>`}</td>
+            ${isAdmin ? `<td class="right">
+              <button class="del" data-duepaid="${d.id}" data-now="${d.paidOn ? 1 : 0}" title="${d.paidOn ? 'Mark as unpaid' : 'Mark as paid'}">${d.paidOn ? '↺' : '✓'}</button>
+              <button class="del" data-deldue="${d.id}" title="Delete">✕</button>
+            </td>` : ''}
+          </tr>`).join('')}
+          ${owed ? `<tr class="totals-row"><td colspan="2">Still due</td><td class="right" style="color:var(--red)">${money(owed)}</td><td colspan="${isAdmin ? 2 : 1}"></td></tr>` : ''}
+        </tbody>
+      </table>` : `<div class="muted">${isAdmin ? 'No payments scheduled yet. Add one below to start tracking what is owed and when.' : 'No payments scheduled.'}</div>`}
+      ${isAdmin ? `
+      <div class="form-grid" style="margin-top:16px">
+        <div><label class="f">What For (e.g. Deposit, Draw 2, Final)</label><input class="f" id="dueLabel" placeholder="Payment" /></div>
+        <div><label class="f">Amount ($)</label><input class="f" id="dueAmount" type="number" step="0.01" min="0" placeholder="0.00" /></div>
+        <div><label class="f">Due Date</label><input class="f" id="dueDate" type="date" /></div>
+        <div style="display:flex;align-items:flex-end;justify-content:flex-end"><button class="btn gold" id="dueAddBtn">+ Schedule Payment</button></div>
+        <div class="error full" id="dueErr"></div>
+      </div>` : ''}
     </div>
 
     ${isAdmin ? `
@@ -828,6 +929,34 @@ async function renderJob(id) {
     await api('/api/projects/' + id, { method: 'DELETE' });
     location.hash = '#/jobs';
   });
+
+  // scheduled payments (what's due)
+  $('#dueAddBtn').addEventListener('click', async () => {
+    const amount = parseFloat($('#dueAmount').value);
+    if (!amount || amount <= 0) { $('#dueErr').textContent = 'Enter a valid amount.'; return; }
+    try {
+      await api(`/api/projects/${id}/dues`, {
+        method: 'POST',
+        json: { label: $('#dueLabel').value.trim(), amount, dueDate: $('#dueDate').value || null },
+      });
+      renderJob(id);
+    } catch (err) { $('#dueErr').textContent = err.message; }
+  });
+  document.querySelectorAll('[data-duepaid]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const nowPaid = b.dataset.now === '1';
+      if (nowPaid && !confirm('Mark this back as unpaid? Its entry in Payments Received will be removed.')) return;
+      await api(`/api/projects/${id}/dues/${b.dataset.duepaid}`, { method: 'PUT', json: { paid: !nowPaid } });
+      renderJob(id);
+    })
+  );
+  document.querySelectorAll('[data-deldue]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Delete this scheduled payment?')) return;
+      await api(`/api/projects/${id}/dues/${b.dataset.deldue}`, { method: 'DELETE' });
+      renderJob(id);
+    })
+  );
 
   // payments
   $('#payAddBtn').addEventListener('click', async () => {

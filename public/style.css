@@ -154,6 +154,29 @@ html:not(.light) .photo-queue { border-color: rgba(255,255,255,0.2); background:
 .photo-item.pending { cursor: default; outline: 2px solid var(--gold); outline-offset: -2px; }
 .photo-item.pending img { opacity: 0.92; }
 
+/* payment due — banner at the top of a job page */
+.due-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: linear-gradient(135deg, #fff6e5, #ffeccc); border: 1px solid #f0c67a; border-left: 6px solid #d99417; border-radius: var(--radius); padding: 16px 20px; margin-bottom: 20px; box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
+.due-banner.overdue { background: linear-gradient(135deg, #fdeaea, #fbdcdc); border-color: #e5a3a3; border-left-color: var(--red); }
+.due-banner-lbl { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: #8a6516; }
+.due-banner.overdue .due-banner-lbl { color: #9c2f2f; }
+.due-banner-amt { font-size: 30px; font-weight: 800; line-height: 1.15; color: #8a6516; }
+.due-banner.overdue .due-banner-amt { color: var(--red); }
+.due-banner-side { text-align: right; font-size: 14px; color: #4a4238; }
+.due-banner-when { font-size: 12.5px; color: #7c7062; margin-top: 2px; }
+html:not(.light) .due-banner { background: linear-gradient(135deg, rgba(217,148,23,0.18), rgba(217,148,23,0.08)); border-color: rgba(217,148,23,0.45); }
+html:not(.light) .due-banner.overdue { background: linear-gradient(135deg, rgba(201,64,64,0.2), rgba(201,64,64,0.08)); border-color: rgba(201,64,64,0.45); }
+html:not(.light) .due-banner-lbl, html:not(.light) .due-banner-amt { color: #f0b445; }
+html:not(.light) .due-banner.overdue .due-banner-lbl, html:not(.light) .due-banner.overdue .due-banner-amt { color: #ff7b7b; }
+html:not(.light) .due-banner-side { color: #dbe3ee; }
+html:not(.light) .due-banner-when { color: #9fb0c8; }
+
+.badge-amber { background: #fbe9c8; color: #8a6516; }
+.badge-red { background: #f7d9d9; color: #9c2f2f; }
+html:not(.light) .badge-amber { background: rgba(217,148,23,0.22); color: #f0b445; }
+html:not(.light) .badge-red { background: rgba(201,64,64,0.24); color: #ff8585; }
+.dues-table tr.ordered td b { font-weight: 600; }
+.stat.stat-alert { box-shadow: 0 4px 14px rgba(201,64,64,0.35); border: 1px solid rgba(201,64,64,0.45); }
+
 /* tappable address — opens the phone's maps app */
 .addr-link { color: inherit; text-decoration: none; border-bottom: 1px dotted currentColor; }
 .addr-link:hover { color: var(--gold); }
@@ -363,4 +386,11 @@ html.light .jobs-controls input[type=search] { background: #fff; }
   .addr-link { padding: 2px 0; }        /* easier to hit with a thumb */
   .addr-big { font-size: 15.5px; }
   .lockbox-code { padding: 6px 12px; font-size: 15px; }
+}
+
+/* mobile — due banner stacks */
+@media (max-width: 800px) {
+  .due-banner { flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px 16px; }
+  .due-banner-side { text-align: left; }
+  .due-banner-amt { font-size: 27px; }
 }

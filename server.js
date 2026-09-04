@@ -663,7 +663,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     contractName: files.contract ? files.contract.originalname : null,
     planFile: files.plan ? files.plan.filename : null,
     planName: files.plan ? files.plan.originalname : null,
-    materialFileName: null, materials: [], notes: [], payments: [], photos: [],
+    materialFileName: null, materials: [], notes: [], payments: [], dues: [], photos: [],
     created: new Date().toISOString(),
   };
   db.projects.push(p); saveDb();
@@ -779,7 +779,73 @@ route('POST', /^\/api\/projects\/(\d+)\/payments$/, (req, res, m, body, user) =>
 route('DELETE', /^\/api\/projects\/(\d+)\/payments\/(\d+)$/, (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
   if (error) return json(res, error[0], { error: error[1] });
+  const gone = (p.payments || []).find((x) => x.id === Number(m[2]));
+  // if this receipt came from a scheduled payment, put that one back to unpaid
+  if (gone && gone.dueId) {
+    const due = (p.dues || []).find((d) => d.id === gone.dueId);
+    if (due) due.paidOn = null;
+  }
   p.payments = (p.payments || []).filter((x) => x.id !== Number(m[2]));
+  saveDb(); json(res, 200, { ok: true });
+}, { staff: true });
+
+/* payments due — the schedule of what the customer still owes and when.
+ * Each entry is typed in by hand: label, amount, due date. Marking one paid also
+ * files it into Payments Received so the two never drift apart. */
+route('POST', /^\/api\/projects\/(\d+)\/dues$/, (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const amount = Number(body.amount);
+  if (!amount || amount <= 0) return json(res, 400, { error: 'A valid amount is required' });
+  p.dues = p.dues || [];
+  const due = {
+    id: nextId(),
+    label: String(body.label || '').trim() || 'Payment',
+    amount,
+    dueDate: body.dueDate || null,
+    paidOn: null,
+    created: new Date().toISOString(),
+  };
+  p.dues.push(due); saveDb();
+  notifyCustomer(p, 'due', 'A payment is now scheduled on your project "' + p.name + '".');
+  json(res, 200, due);
+}, { staff: true });
+
+route('PUT', /^\/api\/projects\/(\d+)\/dues\/(\d+)$/, (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const due = (p.dues || []).find((x) => x.id === Number(m[2]));
+  if (!due) return json(res, 404, { error: 'Payment not found' });
+  if (body.label !== undefined) due.label = String(body.label).trim() || 'Payment';
+  if (body.amount !== undefined) {
+    const amount = Number(body.amount);
+    if (!amount || amount <= 0) return json(res, 400, { error: 'A valid amount is required' });
+    due.amount = amount;
+  }
+  if (body.dueDate !== undefined) due.dueDate = body.dueDate || null;
+  if (body.paid !== undefined) {
+    if (body.paid && !due.paidOn) {
+      // record it as money received, tagged back to this scheduled payment
+      due.paidOn = body.paidOn || new Date().toISOString().slice(0, 10);
+      p.payments = p.payments || [];
+      p.payments.push({
+        id: nextId(), amount: due.amount, date: due.paidOn,
+        note: due.label, dueId: due.id, created: new Date().toISOString(),
+      });
+    } else if (!body.paid && due.paidOn) {
+      due.paidOn = null;
+      p.payments = (p.payments || []).filter((x) => x.dueId !== due.id);
+    }
+  }
+  saveDb(); json(res, 200, due);
+}, { staff: true });
+
+route('DELETE', /^\/api\/projects\/(\d+)\/dues\/(\d+)$/, (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const id = Number(m[2]);
+  p.dues = (p.dues || []).filter((x) => x.id !== id);
+  p.payments = (p.payments || []).filter((x) => x.dueId !== id);  // drop its auto-filed receipt too
   saveDb(); json(res, 200, { ok: true });
 }, { staff: true });
 

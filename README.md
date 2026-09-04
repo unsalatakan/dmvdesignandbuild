@@ -15,7 +15,8 @@ Then open **http://localhost:3000** in your browser.
 
 ## What it does
 
-- **Home** — dashboard with job count, total contract value, materials still to order, and a map of all jobs. Click the map to expand it full-page; click a pin to open that job.
+- **Home** — dashboard with job count, **Payments Due** (everything unpaid across all jobs, with a table of which job owes what and when), total contract value, materials still to order, and a map of all jobs. Click the map to expand it full-page; click a pin to open that job.
+- **Payment schedule** — on any job, type in the payments you expect: what for, how much, and the due date. Unpaid ones show as a banner at the top of the job page (amber, red once overdue) and roll up onto the home page. Tick one off with ✓ and it files itself into Payments Received automatically. Customers see their own schedule as their balance due.
 - **Jobs** — create projects with name, address, lockbox code, price, contract upload, arch plan PDF upload, start date, and assigned customer. The address is automatically located on the map (needs internet).
 - **Job page** — lockbox code (tap it to copy), Excel material list upload, check off materials as you order them, see per-item and total prices plus the "still to order" total. Add notes / to-do items per job.
 - **Addresses are tappable** — anywhere an address shows (job cards, job page, jobs table, map pins), tapping it opens Apple Maps on iPhone, your map app of choice on Android, and Google Maps on a computer.
