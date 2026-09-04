@@ -157,6 +157,17 @@ html:not(.light) .photo-queue { border-color: rgba(255,255,255,0.2); background:
 .photo-item.pending { cursor: default; outline: 2px solid var(--gold); outline-offset: -2px; }
 .photo-item.pending img { opacity: 0.92; }
 
+/* one-tap contract / arch plan links in tables and job cards */
+.file-cell { white-space: nowrap; }
+.mini-chip { display: inline-flex; align-items: center; gap: 4px; background: #eaf6ef; border: 1px solid #c6e5d3; color: var(--gold-dark); font-weight: 600; font-size: 12px; padding: 4px 9px; border-radius: 6px; text-decoration: none; margin-right: 6px; }
+.mini-chip:hover { background: #ddf0e6; text-decoration: none; }
+.mini-chip.off { background: transparent; border-style: dashed; border-color: #d8dbe0; color: #b3b8c0; cursor: default; }
+html:not(.light) .mini-chip { background: rgba(29,157,92,0.14); border-color: rgba(29,157,92,0.38); color: #48c684; }
+html:not(.light) .mini-chip:hover { background: rgba(29,157,92,0.24); }
+html:not(.light) .mini-chip.off { background: transparent; border-color: rgba(255,255,255,0.16); color: #5d6b80; }
+td .mini-chip { margin-right: 4px; }
+.job-card .file-cell { white-space: normal; }
+
 /* payment due — banner at the top of a job page */
 .due-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: linear-gradient(135deg, #fff6e5, #ffeccc); border: 1px solid #f0c67a; border-left: 6px solid #d99417; border-radius: var(--radius); padding: 16px 20px; margin-bottom: 20px; box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
 .due-banner.overdue { background: linear-gradient(135deg, #fdeaea, #fbdcdc); border-color: #e5a3a3; border-left-color: var(--red); }
@@ -287,6 +298,7 @@ html.light .whoami { color: #7a7f8a; }
   /* tables scroll sideways instead of squishing (but never the map panel) */
   .panel:not(.map-card) { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { min-width: 520px; }
+  .overview-table { min-width: 880px; }   /* 8 columns — give them room rather than squashing */
 
   /* forms & modal */
   .form-grid { grid-template-columns: 1fr; }

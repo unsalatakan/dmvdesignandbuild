@@ -43,6 +43,30 @@ function nextDue(p) {
     (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || String(a.dueDate).localeCompare(String(b.dueDate)))[0] || null;
 }
 
+/* One-tap links to a job's contract and arch plan, for tables and lists.
+ * Clicks are stopped from bubbling so these work inside a clickable job row/card. */
+function fileChips(p) {
+  const chip = (file, name, icon, label) => file
+    ? `<a class="mini-chip" href="/api/file/${file}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${esc(name || label)}">${icon} ${label}</a>`
+    : `<span class="mini-chip off" title="Not uploaded">${icon} ${label}</span>`;
+  return chip(p.contractFile, p.contractName, '📄', 'Contract') + chip(p.planFile, p.planName, '📐', 'Plan');
+}
+
+/* Copy-to-clipboard for any element carrying data-lb (a lockbox code). */
+function wireLockboxCopy(root = document) {
+  root.querySelectorAll('[data-lb]').forEach((el) =>
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(el.dataset.lb);
+        const old = el.textContent;
+        el.textContent = '✓ Copied';
+        setTimeout(() => { el.textContent = old; }, 1200);
+      } catch { /* clipboard blocked — the code is on screen anyway */ }
+    })
+  );
+}
+
 /* ---------- open an address in the device's native maps app ---------- */
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -440,6 +464,10 @@ async function renderJobs() {
           ${dueTotal(p) ? `<span class="badge ${openDues(p).some(isOverdue) ? 'badge-red' : 'badge-amber'}">${money(dueTotal(p))} due</span>` : ''}
           ${isAdmin && p.pmName ? `<span class="badge" style="background:#2c6bd7;color:#fff">👷 ${esc(p.pmName)}</span>` : ''}
         </div>
+        ${p.lockbox ? `<div class="job-meta" style="margin-top:8px">
+          <span class="lockbox-code" data-lb="${esc(p.lockbox)}" title="Tap to copy">🔒 ${esc(p.lockbox)}</span>
+        </div>` : ''}
+        <div class="job-meta file-cell" style="margin-top:8px">${fileChips(p)}</div>
         ${isAdmin ? `<div class="job-meta" style="margin-top:8px">
           <span>${(p.materials || []).filter((m) => !m.ordered).length} materials to order</span>
           <span>${(p.notes || []).filter((n) => !n.done).length} open notes</span>
@@ -492,23 +520,25 @@ async function renderJobs() {
           <div class="v">${money(g.items.reduce((s, p) => s + (p.price || 0), 0))}</div>
         </div>`).join('')}
       </div>
-      <table>
+      <table class="overview-table">
         <thead><tr>
-          <th>Status</th><th>Job</th><th>Address</th><th class="right">Price</th><th>Start Date</th><th>Customer</th>
+          <th>Status</th><th>Job</th><th>Address</th><th>Lockbox</th><th>Files</th><th class="right">Price</th><th>Start Date</th><th>Customer</th>
         </tr></thead>
         <tbody>
           ${groups.map((g) => `
-            <tr class="totals-row"><td colspan="6">${g.title} — ${g.items.length} job${g.items.length === 1 ? '' : 's'} <span class="muted">· ${g.note}</span></td></tr>
+            <tr class="totals-row"><td colspan="8">${g.title} — ${g.items.length} job${g.items.length === 1 ? '' : 's'} <span class="muted">· ${g.note}</span></td></tr>
             ${g.items.length ? g.items.map((p) => `
             <tr>
               <td>${statusBadge(p)}</td>
               <td><a href="#/job/${p.id}">${esc(p.name)}</a></td>
               <td>${addrLink(p)}</td>
+              <td>${p.lockbox ? `<span class="lockbox-code" data-lb="${esc(p.lockbox)}" title="Tap to copy">🔒 ${esc(p.lockbox)}</span>` : '<span class="muted">—</span>'}</td>
+              <td class="file-cell">${fileChips(p)}</td>
               <td class="right">${money(p.price)}</td>
               <td>${fmtDate(p.startDate)}</td>
               <td>${p.customerName ? esc(p.customerName) : '<span class="muted">—</span>'}</td>
             </tr>`).join('')
-            : '<tr><td colspan="6" class="muted">None right now.</td></tr>'}
+            : '<tr><td colspan="8" class="muted">None right now.</td></tr>'}
           `).join('')}
         </tbody>
       </table>
@@ -529,14 +559,16 @@ async function renderJobs() {
       </div>
     </div>` : ''}
     <div id="jobsList">${buildBody()}</div>`;
+  wireLockboxCopy();
   if (isAdmin) {
     if (ME.role === 'admin') $('#newProjBtn').addEventListener('click', () => projectModal());
-    $('#jobsSearch').addEventListener('input', (e) => { jobsQuery = e.target.value; $('#jobsList').innerHTML = buildBody(); });
+    const refresh = () => { $('#jobsList').innerHTML = buildBody(); wireLockboxCopy($('#jobsList')); };
+    $('#jobsSearch').addEventListener('input', (e) => { jobsQuery = e.target.value; refresh(); });
     document.querySelectorAll('[data-jf]').forEach((b) =>
       b.addEventListener('click', () => {
         jobsFilter = b.dataset.jf;
         document.querySelectorAll('[data-jf]').forEach((x) => x.classList.toggle('active', x === b));
-        $('#jobsList').innerHTML = buildBody();
+        refresh();
       })
     );
   }
@@ -725,7 +757,7 @@ async function renderJob(id) {
     <div class="panel">
       <div class="info-grid">
         <div><div class="k">Address</div><div class="v">${addrLink(p, 'addr-big')}</div></div>
-        <div><div class="k">Lockbox Code</div><div class="v">${p.lockbox ? `<span class="lockbox-code" id="lockboxCode" title="Tap to copy">🔒 ${esc(p.lockbox)}</span>` : '<span class="muted">—</span>'}</div></div>
+        <div><div class="k">Lockbox Code</div><div class="v">${p.lockbox ? `<span class="lockbox-code" data-lb="${esc(p.lockbox)}" title="Tap to copy">🔒 ${esc(p.lockbox)}</span>` : '<span class="muted">—</span>'}</div></div>
         <div><div class="k">Price</div><div class="v">${money(p.price)}</div></div>
         <div><div class="k">Job Start Date</div><div class="v">${fmtDate(p.startDate)}</div></div>
         <div><div class="k">Customer</div><div class="v">${esc(p.customerName || '—')}</div></div>
@@ -875,15 +907,7 @@ async function renderJob(id) {
   if (p.lat && p.lng) drawMap('jobmap', [p], true);
 
   // tap the lockbox code to copy it (all users)
-  const lbEl = document.getElementById('lockboxCode');
-  if (lbEl) lbEl.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(p.lockbox);
-      const old = lbEl.textContent;
-      lbEl.textContent = '✓ Copied';
-      setTimeout(() => { lbEl.textContent = old; }, 1200);
-    } catch { /* clipboard blocked — the code is on screen anyway */ }
-  });
+  wireLockboxCopy();
 
   // photo viewer (all users)
   document.querySelectorAll('[data-view]').forEach((d) =>
