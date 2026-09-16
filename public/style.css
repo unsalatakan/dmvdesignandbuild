@@ -179,6 +179,13 @@ html:not(.light) .check-summary { background: #16243d; border: 1px solid rgba(25
 .receipt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
 .receipt-card { margin-bottom: 0; }
 .receipt-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+/* the ✕ and 🔎 need a real tap target — a bare glyph is far too small on a phone */
+.receipt-head .del { width: 40px; height: 40px; font-size: 17px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; }
+.receipt-head .del:hover { background: rgba(128,128,128,0.15); }
+/* hover lifts stick on touch screens and shift the button out from under a finger */
+@media (hover: none) {
+  .panel:hover, .stat:hover, .job-card:hover { transform: none; }
+}
 .receipt-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .receipt-meta { font-size: 12px; margin-top: 12px; }
 .pending-pdf { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; font-size: 13px; font-weight: 700; color: var(--muted); background: #edf0f3; }
@@ -455,3 +462,6 @@ html.light .jobs-controls input[type=search] { background: #fff; }
   .due-banner-side { text-align: left; }
   .due-banner-amt { font-size: 27px; }
 }
+
+/* recent receipts list */
+@media (max-width: 800px) { .filed-table { min-width: 640px; } }

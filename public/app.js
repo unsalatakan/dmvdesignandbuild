@@ -1271,6 +1271,15 @@ async function renderReceipts() {
     ...realJobs(projects).sort((a, b) => a.name.localeCompare(b.name))];
   const total = receipts.reduce((s, r) => s + (r.amount || 0), 0);
   const needsAttention = receipts.filter((r) => !r.amount).length;
+  /* Receipts already filed onto a job. They live as that job's costs now, so gather
+   * them back up: anything filed from the inbox, plus any cost with a receipt image
+   * attached that didn't come from a check. Newest first. */
+  const filed = projects
+    .flatMap((p) => (p.invoices || [])
+      .filter((x) => x.receiptId || (x.file && !x.checkId))
+      .map((x) => ({ ...x, projectName: p.name, projectId: p.id })))
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.id - a.id));
+  const filedTotal = filed.reduce((s, x) => s + (x.amount || 0), 0);
 
   $('#main').innerHTML = `
     <div class="page-head">
@@ -1322,7 +1331,27 @@ async function renderReceipts() {
         </div>
         <div class="muted receipt-meta">Added ${fmtDate(String(r.uploaded).slice(0, 10))}${r.by ? ' by ' + esc(r.by) : ''}</div>
       </div>`).join('')}</div>`
-    : '<div class="panel muted">Nothing waiting. Upload a receipt above and it will show up here ready to file.</div>'}`;
+    : '<div class="panel muted">Nothing waiting. Upload a receipt above and it will show up here ready to file.</div>'}
+
+    ${filed.length ? `
+    <div class="panel">
+      <h3>Recent Receipts <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${filed.length} filed${filedTotal ? ', ' + money(filedTotal) : ''}</span></h3>
+      <table class="filed-table">
+        <thead><tr><th>Date</th><th>What</th><th>Paid To</th><th>Job</th><th>Receipt</th><th class="right">Cost</th></tr></thead>
+        <tbody>
+          ${filed.slice(0, 60).map((x) => `
+          <tr>
+            <td>${fmtDate(x.date)}</td>
+            <td>${esc(x.desc)}</td>
+            <td>${x.paidTo ? esc(x.paidTo) : '<span class="muted">—</span>'}</td>
+            <td><a href="#/job/${x.projectId}">${esc(x.projectName)}</a></td>
+            <td>${x.file ? `<a class="mini-chip" href="/api/file/${x.file}" target="_blank" rel="noopener">📄 View</a>` : '<span class="muted">—</span>'}</td>
+            <td class="right"><b>${money(x.amount)}</b></td>
+          </tr>`).join('')}
+          ${filed.length > 60 ? `<tr><td colspan="6" class="muted">Showing the 60 most recent of ${filed.length}.</td></tr>` : ''}
+        </tbody>
+      </table>
+    </div>` : ''}`;
 
   wirePhotoUploader(null, () => renderReceipts(), {
     endpoint: '/api/receipts', field: 'receipt', thumbs: false, prepare: prepReceipt,
@@ -1360,27 +1389,26 @@ async function renderReceipts() {
       } catch (err) { note.textContent = err.message; }
     });
   });
-  document.querySelectorAll('[data-rescan]').forEach((b) =>
-    b.addEventListener('click', async () => {
-      const note = document.querySelector(`[data-save="${b.dataset.rescan}"]`);
-      b.disabled = true;
+  /* One delegated click handler for the whole page. Per-element listeners break
+   * silently if anything above them throws; this cannot. */
+  $('#main').addEventListener('click', async (e) => {
+    const rescan = e.target.closest('[data-rescan]');
+    const del = e.target.closest('[data-delrec]');
+    if (!rescan && !del) return;
+    const id = (rescan || del).dataset.rescan || del.dataset.delrec;
+    const note = document.querySelector(`[data-save="${id}"]`);
+    if (rescan) {
+      rescan.disabled = true;
       if (note) note.textContent = 'Reading again…';
-      try {
-        await api('/api/receipts/' + b.dataset.rescan + '/rescan', { method: 'POST' });
-        renderReceipts();
-      } catch (err) {
-        if (note) note.textContent = err.message;
-        b.disabled = false;
-      }
-    })
-  );
-  document.querySelectorAll('[data-delrec]').forEach((b) =>
-    b.addEventListener('click', async () => {
-      if (!confirm('Delete this receipt? The file is removed too.')) return;
-      await api('/api/receipts/' + b.dataset.delrec, { method: 'DELETE' });
-      renderReceipts();
-    })
-  );
+      try { await api('/api/receipts/' + id + '/rescan', { method: 'POST' }); renderReceipts(); }
+      catch (err) { if (note) note.textContent = err.message; rescan.disabled = false; }
+      return;
+    }
+    if (!confirm('Delete this receipt? The file is removed too.')) return;
+    try { await api('/api/receipts/' + id, { method: 'DELETE' }); renderReceipts(); }
+    catch (err) { if (note) note.textContent = err.message; else alert(err.message); }
+  });
+
 }
 
 /* ---------- CHECK DETAIL (admin) ----------

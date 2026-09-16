@@ -1076,6 +1076,8 @@ route('POST', /^\/api\/receipts\/(\d+)\/assign$/, (req, res, m, body, user) => {
     amount: r.amount,
     date: r.date,
     file: r.file, fileName: r.fileName,
+    receiptId: r.id,                    // so the Receipts tab can still show it once filed
+    filedBy: user.name, filedAt: new Date().toISOString(),
     created: new Date().toISOString(),
   };
   p.invoices.push(inv);
