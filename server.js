@@ -9,6 +9,9 @@ const path = require('path');
 const zlib = require('zlib');
 
 const PORT = process.env.PORT || 3000;
+/* Our own company name. Used to name the general-spending bucket, and to tell the
+ * check scanner that this name on a check is always the payer, never the payee. */
+const COMPANY_NAME = process.env.COMPANY_NAME || 'DMV Design and Build';
 /* Persistent storage: on Railway, attach a Volume — its mount path is provided
  * automatically via RAILWAY_VOLUME_MOUNT_PATH so data survives deploys. */
 const STORAGE_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.env.DATA_DIR || __dirname;
@@ -138,6 +141,22 @@ function loadDb() {
   if (!db.receipts) db.receipts = [];  // receipt inbox, waiting to be filed to a job
   if (!db.contractors) db.contractors = [];
   if (!db.checks) db.checks = [];
+  /* A standing bucket for spending that belongs to no job — fuel, tools, office,
+   * anything general. It is a project so receipts, checks and invoices all work on
+   * it unchanged, but it is flagged so it stays out of job lists, the map and every
+   * contract-value or profit figure. */
+  if (!db.projects.some((p) => p.overhead)) {
+    db.projects.push({
+      id: nextId(), overhead: true,
+      name: COMPANY_NAME + ' — General',
+      address: '', lockbox: null, price: 0, startDate: null, status: 'active',
+      customerId: null, pmId: null, lat: null, lng: null,
+      contractFile: null, contractName: null, planFile: null, planName: null,
+      materialFileName: null, materials: [], notes: [], payments: [], dues: [], invoices: [], photos: [],
+      created: new Date().toISOString(),
+    });
+    saveDb();
+  }
   if (!db.users.some((u) => u.role === 'admin')) {
     db.users.push({ id: nextId(), username: 'dmv', password: hash('dmv123'), role: 'admin', name: 'DMV Design and Build' });
     saveDb();
@@ -771,6 +790,8 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
 }, { staff: true, multipart: true });
 
 route('DELETE', /^\/api\/projects\/(\d+)$/, (req, res, m) => {
+  const target = db.projects.find((p) => p.id === Number(m[1]));
+  if (target && target.overhead) return json(res, 400, { error: 'The general spending bucket cannot be deleted.' });
   db.projects = db.projects.filter((p) => p.id !== Number(m[1]));
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
@@ -1076,8 +1097,7 @@ route('DELETE', /^\/api\/receipts\/(\d+)$/, async (req, res, m) => {
 /* Every check is drawn on the company's own account, so the pre-printed company name
  * is always the payer. Saying so stops the scanner grabbing it as the payee — it is
  * the largest, clearest name on the page and otherwise an easy thing to mistake. */
-const COMPANY_NAME = process.env.COMPANY_NAME || 'DMV Design and Build';
-const CHECK_PROMPT = 'This is a photograph of a business check or its carbon-copy stub. '
+const CHECK_PROMPT ='This is a photograph of a business check or its carbon-copy stub. '
   + 'The check is always written FROM "' + COMPANY_NAME + '" (also appearing as "'
   + COMPANY_NAME + ' LLC"), whose name is pre-printed on the check. That pre-printed name '
   + 'is the payer and is NEVER the payee — ignore it when looking for who was paid. '

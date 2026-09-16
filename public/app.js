@@ -26,6 +26,12 @@ function setRoleFlags() {
   IS_DELIVERY = ME.role === 'delivery';
 }
 
+/* The general-spending bucket is a project under the hood so receipts, checks and
+ * invoices work on it unchanged — but it is not a job, so it stays out of job lists,
+ * totals and the map. These two helpers are the only place that distinction lives. */
+const realJobs = (list) => list.filter((p) => !p.overhead);
+const overheadOf = (list) => list.find((p) => p.overhead) || null;
+
 const $ = (s) => document.querySelector(s);
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -279,7 +285,9 @@ function financeChartSVG(projects) {
 
 /* ---------- HOME ---------- */
 async function renderHome() {
-  const projects = await api('/api/projects');
+  const all = await api('/api/projects');
+  const overhead = overheadOf(all);
+  const projects = realJobs(all);              // jobs only — overhead is not a job
   const totalValue = projects.reduce((s, p) => s + (p.price || 0), 0);
   const isAdmin = IS_STAFF; // admin or project manager — not delivery
   const received = isAdmin ? projects.reduce((s, p) => s + (p.payments || []).reduce((a, x) => a + (x.amount || 0), 0), 0) : null;
@@ -320,6 +328,11 @@ async function renderHome() {
       ${isAdmin ? `<div class="stat ${overdueCount ? 'stat-alert' : ''}"><div class="num" style="color:${duesTotal ? 'var(--red)' : 'inherit'}">${money(duesTotal)}</div><div class="lbl">Payments Due${overdueCount ? ` — ${overdueCount} overdue` : ''}</div></div>` : ''}
       <div class="stat"><div class="num">${money(totalValue)}</div><div class="lbl">Total Contract Value</div></div>
       ${toOrderCost !== null ? `<div class="stat"><div class="num">${money(toOrderCost)}</div><div class="lbl">Materials To Order Cost</div></div>` : ''}
+      ${isAdmin && overhead ? (() => {
+        const spent = (overhead.invoices || []).reduce((s, x) => s + (x.amount || 0), 0);
+        return `<div class="stat" style="cursor:pointer" onclick="location.hash='#/job/${overhead.id}'">
+          <div class="num">${money(spent)}</div><div class="lbl">General Spending</div></div>`;
+      })() : ''}
     </div>
     ${isAdmin && allDues.length ? (() => {
       const jobCount = new Set(allDues.map((d) => d.projectId)).size;
@@ -541,7 +554,7 @@ window.addEventListener('hashchange', () => { $('#mapFull').classList.add('hidde
 /* ---------- JOBS LIST ---------- */
 let jobsFilter = 'all', jobsQuery = '';
 async function renderJobs() {
-  const projects = await api('/api/projects');
+  const projects = realJobs(await api('/api/projects'));
   const isAdmin = IS_STAFF; // admin or project manager — not delivery
   const card = (p) => `
       <div class="job-card" onclick="location.hash='#/job/${p.id}'">
@@ -849,6 +862,11 @@ async function renderJob(id) {
       </div>
     </div>` : ''}
 
+    ${p.overhead ? `
+    <div class="panel">
+      <div class="muted">Spending that belongs to no single job — fuel, tools, office, general supplies.
+      Pick this in the job dropdown on a receipt or a check line.</div>
+    </div>` : `
     <div class="panel">
       <div class="info-grid">
         <div><div class="k">Address</div><div class="v">${addrLink(p, 'addr-big')}</div></div>
@@ -862,7 +880,7 @@ async function renderJob(id) {
         ${p.planFile ? `<a class="file-chip" href="/api/file/${p.planFile}" target="_blank">📐 Arch Plan — ${esc(p.planName)}</a>` : '<span class="muted">No arch plan uploaded.</span>'}
       </div>
       ${!p.lat && isAdmin ? '<div class="muted" style="margin-top:10px">⚠️ Address could not be located on the map. Edit the project and refine the address.</div>' : ''}
-    </div>
+    </div>`}
 
     ${p.lat && p.lng ? `
     <div class="panel">
@@ -885,7 +903,7 @@ async function renderJob(id) {
       <a href="#/job/${p.id}/photos" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">View all ${p.photos.length} photos →</a>` : '<div class="muted">No photos yet.</div>'}
     </div>
 
-    ${isAdmin ? `
+    ${isAdmin && !p.overhead ? `
     <div class="panel">
       <h3>Payment Schedule${owed ? ` <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${money(owed)} still due</span>` : ''}</h3>
       ${dues.length ? `
@@ -917,7 +935,7 @@ async function renderJob(id) {
       </div>
     </div>` : ''}
 
-    ${isAdmin ? `
+    ${isAdmin && !p.overhead ? `
     <div class="panel">
       <h3>Payments Received</h3>
       <div class="info-grid" style="margin-bottom:16px">
@@ -993,7 +1011,7 @@ async function renderJob(id) {
       </div>` : ''}
     </div>
 
-    ${isAdmin ? `
+    ${isAdmin && !p.overhead ? `
     <div class="panel">
       <h3>Material List ${p.materialFileName ? '— from ' + esc(p.materialFileName) : ''}</h3>
       <div style="margin-bottom:14px">
@@ -1248,7 +1266,9 @@ async function renderJob(id) {
  * with editable fields until it gets filed to a job as that job's invoice. */
 async function renderReceipts() {
   const [receipts, projects] = await Promise.all([api('/api/receipts'), api('/api/projects')]);
-  const jobs = projects.slice().sort((a, b) => a.name.localeCompare(b.name));
+  // general bucket first, then the jobs A–Z
+  const jobs = [...(overheadOf(projects) ? [overheadOf(projects)] : []),
+    ...realJobs(projects).sort((a, b) => a.name.localeCompare(b.name))];
   const total = receipts.reduce((s, r) => s + (r.amount || 0), 0);
   const needsAttention = receipts.filter((r) => !r.amount).length;
 
@@ -1371,7 +1391,9 @@ async function renderCheck(id) {
   try { k = await api('/api/checks/' + id); }
   catch { $('#main').innerHTML = '<div class="panel">Check not found.</div>'; return; }
   const [projects, contractors] = await Promise.all([api('/api/projects'), api('/api/contractors')]);
-  const jobs = projects.slice().sort((a, b) => a.name.localeCompare(b.name));
+  // general bucket first, then the jobs A–Z
+  const jobs = [...(overheadOf(projects) ? [overheadOf(projects)] : []),
+    ...realJobs(projects).sort((a, b) => a.name.localeCompare(b.name))];
   const lines = k.lines || [];
   const unassigned = lines.filter((l) => !l.projectId).length;
 

@@ -67,6 +67,14 @@ Notes:
 - iPhone HEIC photos are converted in the browser before upload, and big photos are shrunk, so neither format nor size should ever block a scan.
 - Receipts are sent to Anthropic's API to be read. They are not used to train models.
 
+## General spending
+
+Not every cost belongs to a job — fuel, tools, office supplies. **DMV Design and Build — General** appears at the top of the job dropdown on any receipt or check line, so the delivery crew can file that spending without picking a job.
+
+It behaves like a job for costs only: no contract price, no payment schedule, no materials, and it stays out of the jobs list, the map, contract-value totals and profit figures. Admins get a **General Spending** tile on the home page that opens it. It's created automatically and can't be deleted.
+
+Note this is different from a **contractor** — contractors are who you write checks *to*. You don't need your own company in that list.
+
 ## Who sees what
 
 | | Admin | Project Manager | Delivery | Customer |
