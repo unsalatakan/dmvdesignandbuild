@@ -115,7 +115,7 @@ function showApp() {
   $('#appView').classList.remove('hidden');
   $('#whoami').textContent = ME.name + (ME.role === 'admin' ? ' (Admin)' : ME.role === 'pm' ? ' (Project Manager)' : '');
   const links = [['#/home', 'Home'], ['#/jobs', ME.role === 'customer' ? 'My Jobs' : 'Jobs']];
-  if (ME.role !== 'customer') links.push(['#/orders', 'Orders']);
+  if (ME.role !== 'customer') links.push(['#/orders', 'Orders'], ['#/receipts', 'Receipts']);
   links.push(['#/photos', 'Photos']);
   if (ME.role === 'admin') links.push(['#/customers', 'Customers'], ['#/managers', 'Managers']);
   $('#navLinks').innerHTML = links.map(([h, t]) => `<a href="${h}" data-h="${h}">${t}</a>`).join('');
@@ -190,6 +190,7 @@ function route() {
   if (jobMatch) return renderJob(Number(jobMatch[1]));
   if (h.startsWith('#/jobs')) return renderJobs();
   if (h.startsWith('#/orders') && ME.role !== 'customer') return renderOrders();
+  if (h.startsWith('#/receipts') && ME.role !== 'customer') return renderReceipts();
   if (h.startsWith('#/managers') && ME.role === 'admin') return renderManagers();
   if (h.startsWith('#/photos')) return renderPhotos();
   if (h.startsWith('#/customers') && ME.role === 'admin') return renderCustomers();
@@ -1203,6 +1204,107 @@ async function renderJob(id) {
   );
 }
 
+/* ---------- RECEIPTS INBOX (staff) ----------
+ * Snap receipts on site without picking a job. Each upload is scanned, then sits here
+ * with editable fields until it gets filed to a job as that job's invoice. */
+async function renderReceipts() {
+  const [receipts, projects] = await Promise.all([api('/api/receipts'), api('/api/projects')]);
+  const jobs = projects.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const total = receipts.reduce((s, r) => s + (r.amount || 0), 0);
+  const needsAttention = receipts.filter((r) => !r.amount).length;
+
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>Receipts</h1>
+      <a class="btn" href="#/jobs">Jobs →</a>
+    </div>
+    <div class="panel">
+      <h3>Add Receipts</h3>
+      ${photoUploaderHtml({
+        accept: '.pdf,image/*',
+        labels: { camera: '📷 Snap Receipt', pick: '🧾 Choose Files', send: '⬆ Upload & Read All' },
+        hint: 'Keep tapping <b>Snap Receipt</b> to add more — nothing uploads until you tap Upload.',
+      })}
+      <div class="muted" style="margin-top:12px">
+        Snap them now and file them to a job later. Each one is read automatically — cost, vendor and date come back filled in for you to check.
+      </div>
+    </div>
+
+    <div class="page-head" style="margin-bottom:12px">
+      <h1 style="font-size:17px">Waiting to be filed${receipts.length ? ` — ${receipts.length}` : ''}</h1>
+      ${receipts.length ? `<span class="muted">${money(total)} unfiled${needsAttention ? ` · ${needsAttention} need a cost` : ''}</span>` : ''}
+    </div>
+
+    ${receipts.length ? `<div class="receipt-grid">${receipts.map((r) => `
+      <div class="panel receipt-card" data-rc="${r.id}">
+        <div class="receipt-head">
+          <a class="mini-chip" href="/api/file/${r.file}" target="_blank" rel="noopener">📄 View receipt</a>
+          <button class="del" data-delrec="${r.id}" title="Delete receipt">✕</button>
+        </div>
+        ${r.scanned ? '' : `<div class="scan-status">Couldn't read this one automatically — fill it in below.</div>`}
+        <div class="form-grid" style="margin-top:12px">
+          <div class="full"><label class="f">Description</label><input class="f" data-f="desc" value="${esc(r.desc)}" placeholder="What was bought" /></div>
+          <div><label class="f">Cost ($)</label><input class="f" data-f="amount" type="number" step="0.01" min="0" value="${r.amount ?? ''}" placeholder="0.00" /></div>
+          <div><label class="f">Paid To</label><input class="f" data-f="paidTo" value="${esc(r.paidTo)}" placeholder="Sub or supplier" /></div>
+          <div><label class="f">Date</label><input class="f" data-f="date" type="date" value="${r.date || ''}" /></div>
+          <div><label class="f">File To Job</label>
+            <select class="f" data-f="job">
+              <option value="">— Choose a job —</option>
+              ${jobs.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="full receipt-actions">
+            <span class="muted" data-save="${r.id}"></span>
+            <button class="btn gold" data-file="${r.id}">File to Job</button>
+          </div>
+        </div>
+        <div class="muted receipt-meta">Added ${fmtDate(String(r.uploaded).slice(0, 10))}${r.by ? ' by ' + esc(r.by) : ''}</div>
+      </div>`).join('')}</div>`
+    : '<div class="panel muted">Nothing waiting. Upload a receipt above and it will show up here ready to file.</div>'}`;
+
+  wirePhotoUploader(null, () => renderReceipts(), { endpoint: '/api/receipts', field: 'receipt', thumbs: false });
+
+  // edits save on blur, so a half-typed cost is never pushed
+  document.querySelectorAll('.receipt-card').forEach((card) => {
+    const id = card.dataset.rc;
+    const val = (f) => card.querySelector(`[data-f="${f}"]`).value;
+    const note = card.querySelector(`[data-save="${id}"]`);
+    card.querySelectorAll('[data-f]:not([data-f="job"])').forEach((inp) =>
+      inp.addEventListener('blur', async () => {
+        try {
+          await api('/api/receipts/' + id, {
+            method: 'PUT',
+            json: { desc: val('desc'), amount: val('amount'), paidTo: val('paidTo'), date: val('date') },
+          });
+          note.textContent = 'Saved';
+          setTimeout(() => { note.textContent = ''; }, 1200);
+        } catch (err) { note.textContent = err.message; }
+      })
+    );
+    card.querySelector(`[data-file="${id}"]`).addEventListener('click', async () => {
+      const projectId = val('job');
+      if (!projectId) { note.textContent = 'Pick a job first.'; return; }
+      if (!parseFloat(val('amount'))) { note.textContent = 'Enter the cost first.'; return; }
+      try {
+        // flush any unsaved edits, then file it
+        await api('/api/receipts/' + id, {
+          method: 'PUT',
+          json: { desc: val('desc'), amount: val('amount'), paidTo: val('paidTo'), date: val('date') },
+        });
+        await api(`/api/receipts/${id}/assign`, { method: 'POST', json: { projectId } });
+        renderReceipts();
+      } catch (err) { note.textContent = err.message; }
+    });
+  });
+  document.querySelectorAll('[data-delrec]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Delete this receipt? The file is removed too.')) return;
+      await api('/api/receipts/' + b.dataset.delrec, { method: 'DELETE' });
+      renderReceipts();
+    })
+  );
+}
+
 /* ---------- CUSTOMERS ---------- */
 async function renderCustomers() {
   const customers = await api('/api/customers');
@@ -1445,31 +1547,38 @@ async function makeThumb(file, maxDim = 480) {
  * (tap Take Photo over and over) and can drop bad shots; nothing reaches the server
  * until Upload All. Markup + wiring are split so both the job page and the job's
  * photo page can reuse them. */
-function photoUploaderHtml() {
+function photoUploaderHtml(opts = {}) {
+  const l = { camera: '📷 Take Photo', pick: '🖼️ Choose Photos', send: '⬆ Upload All', ...(opts.labels || {}) };
+  const hint = opts.hint || 'Keep tapping <b>Take Photo</b> to add more — nothing uploads until you tap Upload All.';
+  const accept = opts.accept || 'image/*';
   return `
     <div class="photo-uploader">
       <input type="file" id="photoCam" accept="image/*" capture="environment" style="display:none" />
-      <input type="file" id="photoFile" accept="image/*" multiple style="display:none" />
+      <input type="file" id="photoFile" accept="${accept}" multiple style="display:none" />
       <div class="photo-add-btns">
-        <button class="btn gold" id="photoCamBtn">📷 Take Photo</button>
-        <button class="btn" id="photoPickBtn">🖼️ Choose Photos</button>
+        <button class="btn gold" id="photoCamBtn">${l.camera}</button>
+        <button class="btn" id="photoPickBtn">${l.pick}</button>
       </div>
       <div class="photo-queue hidden" id="photoQueue">
         <div class="photo-queue-head">
           <b id="photoQueueCount"></b>
           <div class="photo-queue-acts">
             <button class="btn ghost" id="photoQueueClear">Clear</button>
-            <button class="btn gold" id="photoQueueSend">⬆ Upload All</button>
+            <button class="btn gold" id="photoQueueSend" data-send="${esc(l.send)}">${l.send}</button>
           </div>
         </div>
         <div class="photo-queue-grid" id="photoQueueGrid"></div>
-        <div class="muted photo-queue-hint">Keep tapping <b>Take Photo</b> to add more — nothing uploads until you tap Upload All.</div>
+        <div class="muted photo-queue-hint">${hint}</div>
       </div>
     </div>`;
 }
 
-function wirePhotoUploader(jobId, onDone) {
+/* opts: { endpoint, field, thumbs } — defaults upload photos to a job. */
+function wirePhotoUploader(jobId, onDone, opts = {}) {
   if (!$('#photoCamBtn')) return;
+  const endpoint = opts.endpoint || `/api/projects/${jobId}/photos`;
+  const field = opts.field || 'photo';
+  const wantThumbs = opts.thumbs !== false;
   const queue = [];               // { file, url }
   const qWrap = $('#photoQueue'), qGrid = $('#photoQueueGrid');
   const qCount = $('#photoQueueCount'), qSend = $('#photoQueueSend'), qClear = $('#photoQueueClear');
@@ -1477,24 +1586,27 @@ function wirePhotoUploader(jobId, onDone) {
   const drawQueue = () => {
     qWrap.classList.toggle('hidden', !queue.length);
     if (!queue.length) return;
-    qCount.textContent = `${queue.length} photo${queue.length === 1 ? '' : 's'} ready to upload`;
+    const noun = wantThumbs ? 'photo' : 'file';
+    qCount.textContent = `${queue.length} ${noun}${queue.length === 1 ? '' : 's'} ready to upload`;
     qGrid.innerHTML = queue.map((q, i) => `
       <div class="photo-item pending">
-        <img src="${q.url}" alt="" />
+        ${q.url ? `<img src="${q.url}" alt="" />` : '<div class="pending-pdf">📄 PDF</div>'}
         <button class="photo-del" data-qrm="${i}" title="Remove">✕</button>
       </div>`).join('');
     qGrid.querySelectorAll('[data-qrm]').forEach((b) =>
       b.addEventListener('click', () => {
         const [gone] = queue.splice(Number(b.dataset.qrm), 1);
-        URL.revokeObjectURL(gone.url);
+        if (gone.url) URL.revokeObjectURL(gone.url);
         drawQueue();
       }));
   };
 
   const addFiles = (files) => {
     for (const f of files) {
-      if (!f.type.startsWith('image/') && !/\.(heic|heif)$/i.test(f.name)) continue;
-      queue.push({ file: f, url: URL.createObjectURL(f) });
+      const isPdf = /\.pdf$/i.test(f.name);
+      const isImg = f.type.startsWith('image/') || /\.(heic|heif)$/i.test(f.name);
+      if (!isImg && !(isPdf && !wantThumbs)) continue;   // PDFs only where they're accepted
+      queue.push({ file: f, url: isPdf ? null : URL.createObjectURL(f) });   // no preview for a PDF
     }
     drawQueue();
   };
@@ -1519,23 +1631,29 @@ function wirePhotoUploader(jobId, onDone) {
     const tick = () => { qSend.textContent = `Uploading ${Math.min(done + 1, total)} of ${total}…`; };
     tick();
     const send = async ({ file }) => {
-      const photo = await heicToJpeg(file);
+      // PDFs go up untouched; images get the HEIC fix and a thumbnail where wanted
+      const isPdf = /\.pdf$/i.test(file.name);
+      const up = isPdf ? file : await heicToJpeg(file);
       const fd = new FormData();
-      fd.append('photo', photo, photo.name || 'photo.jpg');
-      const th = await makeThumb(photo);
-      if (th) fd.append('thumb', th, 'thumb.jpg');
-      await api(`/api/projects/${jobId}/photos`, { method: 'POST', body: fd });
+      fd.append(field, up, up.name || 'upload.jpg');
+      if (wantThumbs && !isPdf) {
+        const th = await makeThumb(up);
+        if (th) fd.append('thumb', th, 'thumb.jpg');
+      }
+      await api(endpoint, { method: 'POST', body: fd });
       done++; tick();
     };
     try {
-      let next = 0;   // 3 at a time — quick on wifi, still gentle on a phone's signal
-      await Promise.all([0, 1, 2].map(async () => {
+      // receipts are scanned server-side, so send them one at a time; photos go 3 up
+      const lanes = wantThumbs ? [0, 1, 2] : [0];
+      let next = 0;
+      await Promise.all(lanes.map(async () => {
         while (next < jobs.length) await send(jobs[next++]);
       }));
-      queue.forEach((q) => URL.revokeObjectURL(q.url));
+      queue.forEach((q) => { if (q.url) URL.revokeObjectURL(q.url); });
       onDone();
     } catch (err) {
-      alert('Upload failed: ' + err.message + (done ? `\n\n${done} of ${total} photo(s) did make it.` : ''));
+      alert('Upload failed: ' + err.message + (done ? `\n\n${done} of ${total} did make it.` : ''));
       onDone();
     }
   });

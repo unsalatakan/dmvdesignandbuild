@@ -104,6 +104,7 @@ function loadDb() {
   else db = { users: [], projects: [], seq: 1 };
   if (!db.sessions) db.sessions = {};
   if (!db.todos) db.todos = [];        // general to-do list, not tied to any job
+  if (!db.receipts) db.receipts = [];  // receipt inbox, waiting to be filed to a job
   if (!db.users.some((u) => u.role === 'admin')) {
     db.users.push({ id: nextId(), username: 'dmv', password: hash('dmv123'), role: 'admin', name: 'DMV Design and Build' });
     saveDb();
@@ -750,19 +751,20 @@ const SCAN_PROMPT = 'This is a receipt or supplier invoice for a construction jo
   + '"desc" (a short description of what was bought, 6 words or fewer). '
   + 'Use null for any field you cannot read with confidence. Never guess at the amount.';
 
-route('POST', /^\/api\/scan-receipt$/, async (req, res, m, body) => {
-  if (!process.env.ANTHROPIC_API_KEY) return json(res, 503, { error: 'Receipt scanning is not set up on this server.' });
-  const f = body.files && body.files.receipt;
-  if (!f) return json(res, 400, { error: 'No file uploaded' });
+/* Reads one receipt. Returns the parsed fields, or throws with a message fit to show. */
+async function scanReceipt(f) {
+  if (!process.env.ANTHROPIC_API_KEY) { const e = new Error('Receipt scanning is not set up on this server.'); e.code = 503; throw e; }
   const media = SCAN_MEDIA[path.extname(f.originalname).toLowerCase()];
-  if (!media) return json(res, 400, { error: 'Receipt must be a PDF or an image' });
-  if (f.buffer.length > 4.5 * 1024 * 1024) return json(res, 400, { error: 'Receipt is too large to scan (max ~4.5 MB)' });
+  if (!media) { const e = new Error('Receipt must be a PDF or an image'); e.code = 400; throw e; }
+  if (f.buffer.length > 4.5 * 1024 * 1024) { const e = new Error('Receipt is too large to scan (max ~4.5 MB)'); e.code = 400; throw e; }
 
   const source = { type: 'base64', media_type: media, data: f.buffer.toString('base64') };
   const content = [
     media === 'application/pdf' ? { type: 'document', source } : { type: 'image', source },
     { type: 'text', text: SCAN_PROMPT },
   ];
+  const unreadable = () => { const e = new Error('Could not read the receipt. Enter the details by hand.'); e.code = 502; return e; };
+  let out;
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -774,27 +776,33 @@ route('POST', /^\/api\/scan-receipt$/, async (req, res, m, body) => {
       body: JSON.stringify({ model: SCAN_MODEL, max_tokens: 300, messages: [{ role: 'user', content }] }),
       signal: AbortSignal.timeout(45000),
     });
-    if (!r.ok) {
-      console.error('Receipt scan rejected (' + r.status + '):', await r.text());
-      return json(res, 502, { error: 'Could not read the receipt. Enter the details by hand.' });
-    }
-    const out = await r.json();
-    const text = (out.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
-    const match = text.match(/\{[\s\S]*\}/);            // tolerate a stray code fence or lead-in
-    if (!match) return json(res, 502, { error: 'Could not read the receipt. Enter the details by hand.' });
-    const g = JSON.parse(match[0]);
-    // keep a leading minus so a refund/credit total is rejected rather than flipped positive
-    const amount = Number(String(g.amount ?? '').replace(/[^0-9.-]/g, ''));
-    json(res, 200, {
-      vendor: g.vendor ? String(g.vendor).trim().slice(0, 80) : null,
-      amount: Number.isFinite(amount) && amount > 0 ? amount : null,
-      date: /^\d{4}-\d{2}-\d{2}$/.test(String(g.date || '')) ? g.date : null,
-      desc: g.desc ? String(g.desc).trim().slice(0, 120) : null,
-    });
+    if (!r.ok) { console.error('Receipt scan rejected (' + r.status + '):', await r.text()); throw unreadable(); }
+    out = await r.json();
   } catch (e) {
+    if (e.code) throw e;
     console.error('Receipt scan failed:', e.message);
-    json(res, 502, { error: 'Could not read the receipt. Enter the details by hand.' });
+    throw unreadable();
   }
+  const text = (out.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+  const match = text.match(/\{[\s\S]*\}/);          // tolerate a stray code fence or lead-in
+  if (!match) throw unreadable();
+  let g;
+  try { g = JSON.parse(match[0]); } catch { throw unreadable(); }
+  // keep a leading minus so a refund/credit total is rejected rather than flipped positive
+  const amount = Number(String(g.amount ?? '').replace(/[^0-9.-]/g, ''));
+  return {
+    vendor: g.vendor ? String(g.vendor).trim().slice(0, 80) : null,
+    amount: Number.isFinite(amount) && amount > 0 ? amount : null,
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String(g.date || '')) ? g.date : null,
+    desc: g.desc ? String(g.desc).trim().slice(0, 120) : null,
+  };
+}
+
+route('POST', /^\/api\/scan-receipt$/, async (req, res, m, body) => {
+  const f = body.files && body.files.receipt;
+  if (!f) return json(res, 400, { error: 'No file uploaded' });
+  try { json(res, 200, await scanReceipt(f)); }
+  catch (e) { json(res, e.code || 502, { error: e.message }); }
 }, { staff: true, multipart: true });
 
 /* invoices — money going OUT on a job: subs, suppliers, permits.
@@ -854,6 +862,79 @@ route('DELETE', /^\/api\/projects\/(\d+)\/invoices\/(\d+)$/, async (req, res, m,
   const inv = (p.invoices || []).find((x) => x.id === Number(m[2]));
   if (inv && inv.file) await deleteFile(inv.file);
   p.invoices = (p.invoices || []).filter((x) => x.id !== Number(m[2]));
+  saveDb(); json(res, 200, { ok: true });
+}, { staff: true });
+
+/* ---- receipt inbox ----
+ * Capture receipts on site without picking a job. Each one is scanned on upload,
+ * sits in the inbox with editable fields, then gets filed to a job — which moves it
+ * into that job's invoices, file and all. Staff only, like invoices themselves. */
+route('GET', /^\/api\/receipts$/, (req, res) => {
+  const list = (db.receipts || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
+  json(res, 200, list);
+}, { staff: true });
+
+route('POST', /^\/api\/receipts$/, async (req, res, m, body, user) => {
+  const f = body.files && body.files.receipt;
+  if (!f) return json(res, 400, { error: 'No file uploaded' });
+  if (!INVOICE_FILE_RE.test(f.originalname)) return json(res, 400, { error: 'Receipt must be a PDF or an image' });
+  await storeFile(f);
+  // a failed scan must never lose the receipt — it just lands with blank fields
+  let g = { vendor: null, amount: null, date: null, desc: null };
+  let scanError = null;
+  try { g = await scanReceipt(f); }
+  catch (e) { scanError = e.message; }
+  db.receipts = db.receipts || [];
+  const r = {
+    id: nextId(),
+    file: f.filename, fileName: f.originalname,
+    desc: g.desc || '', paidTo: g.vendor || '', amount: g.amount || null,
+    date: g.date || new Date().toISOString().slice(0, 10),
+    scanned: !scanError, scanError,
+    uploaded: new Date().toISOString(), by: user.name,
+  };
+  db.receipts.push(r); saveDb(); json(res, 200, r);
+}, { staff: true, multipart: true });
+
+route('PUT', /^\/api\/receipts\/(\d+)$/, (req, res, m, body) => {
+  const r = (db.receipts || []).find((x) => x.id === Number(m[1]));
+  if (!r) return json(res, 404, { error: 'Receipt not found' });
+  if (body.desc !== undefined) r.desc = String(body.desc).trim();
+  if (body.paidTo !== undefined) r.paidTo = String(body.paidTo).trim();
+  if (body.date !== undefined) r.date = body.date || r.date;
+  if (body.amount !== undefined) {
+    const a = Number(body.amount);
+    r.amount = Number.isFinite(a) && a > 0 ? a : null;
+  }
+  saveDb(); json(res, 200, r);
+}, { staff: true });
+
+/* File a receipt to a job: it becomes that job's invoice and leaves the inbox. */
+route('POST', /^\/api\/receipts\/(\d+)\/assign$/, (req, res, m, body, user) => {
+  const r = (db.receipts || []).find((x) => x.id === Number(m[1]));
+  if (!r) return json(res, 404, { error: 'Receipt not found' });
+  const { p, error } = findProject(body.projectId, user);
+  if (error) return json(res, error[0], { error: error[1] });
+  if (!r.amount || r.amount <= 0) return json(res, 400, { error: 'Enter the cost before filing this receipt' });
+  p.invoices = p.invoices || [];
+  const inv = {
+    id: nextId(),
+    desc: r.desc || 'Receipt',
+    paidTo: r.paidTo || '',
+    amount: r.amount,
+    date: r.date,
+    file: r.file, fileName: r.fileName,
+    created: new Date().toISOString(),
+  };
+  p.invoices.push(inv);
+  db.receipts = db.receipts.filter((x) => x.id !== r.id);   // the file moves with it, so don't delete it
+  saveDb(); json(res, 200, { ok: true, projectId: p.id, invoice: inv });
+}, { staff: true });
+
+route('DELETE', /^\/api\/receipts\/(\d+)$/, async (req, res, m) => {
+  const r = (db.receipts || []).find((x) => x.id === Number(m[1]));
+  if (r && r.file) await deleteFile(r.file);
+  db.receipts = (db.receipts || []).filter((x) => x.id !== Number(m[1]));
   saveDb(); json(res, 200, { ok: true });
 }, { staff: true });
 
@@ -1029,10 +1110,19 @@ route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, b
 /* protected file downloads */
 route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
   const name = path.basename(decodeURIComponent(m[1]));
-  const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name)
-    || (p.photos || []).some((ph) => ph.file === name || ph.thumb === name)
-    || (p.invoices || []).some((iv) => iv.file === name));
-  if (!owner || !canAccess(owner, user)) return json(res, 403, { error: 'No access' });
+  // unfiled receipts belong to no job yet — staff can open them, nobody else
+  const inInbox = (db.receipts || []).some((r) => r.file === name);
+  if (inInbox && user.role === 'customer') return json(res, 403, { error: 'No access' });
+  if (!inInbox) {
+    const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name)
+      || (p.photos || []).some((ph) => ph.file === name || ph.thumb === name)
+      || (p.invoices || []).some((iv) => iv.file === name));
+    if (!owner || !canAccess(owner, user)) return json(res, 403, { error: 'No access' });
+    // invoices are internal cost records — never served to the customer, even on their own job
+    if (user.role === 'customer' && (owner.invoices || []).some((iv) => iv.file === name)) {
+      return json(res, 403, { error: 'No access' });
+    }
+  }
   // invoices are internal cost records — never served to the customer, even on their own job
   if (user.role === 'customer' && (owner.invoices || []).some((iv) => iv.file === name)) {
     return json(res, 403, { error: 'No access' });
