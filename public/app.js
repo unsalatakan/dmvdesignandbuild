@@ -117,7 +117,7 @@ function showApp() {
   const links = [['#/home', 'Home'], ['#/jobs', ME.role === 'customer' ? 'My Jobs' : 'Jobs']];
   if (ME.role !== 'customer') links.push(['#/orders', 'Orders'], ['#/receipts', 'Receipts']);
   links.push(['#/photos', 'Photos']);
-  if (ME.role === 'admin') links.push(['#/customers', 'Customers'], ['#/managers', 'Managers']);
+  if (ME.role === 'admin') links.push(['#/contractors', 'Contractors'], ['#/customers', 'Customers'], ['#/managers', 'Managers']);
   $('#navLinks').innerHTML = links.map(([h, t]) => `<a href="${h}" data-h="${h}">${t}</a>`).join('');
   if (!location.hash || location.hash === '#/') location.hash = '#/home';
   route();
@@ -191,6 +191,11 @@ function route() {
   if (h.startsWith('#/jobs')) return renderJobs();
   if (h.startsWith('#/orders') && ME.role !== 'customer') return renderOrders();
   if (h.startsWith('#/receipts') && ME.role !== 'customer') return renderReceipts();
+  const checkMatch = h.match(/^#\/check\/(\d+)/);
+  if (checkMatch && ME.role === 'admin') return renderCheck(Number(checkMatch[1]));
+  const contractorMatch = h.match(/^#\/contractor\/(\d+)/);
+  if (contractorMatch && ME.role === 'admin') return renderContractor(Number(contractorMatch[1]));
+  if (h.startsWith('#/contractors') && ME.role === 'admin') return renderContractors();
   if (h.startsWith('#/managers') && ME.role === 'admin') return renderManagers();
   if (h.startsWith('#/photos')) return renderPhotos();
   if (h.startsWith('#/customers') && ME.role === 'admin') return renderCustomers();
@@ -1114,8 +1119,9 @@ async function renderJob(id) {
     if (!f) { status.textContent = ''; return; }
     status.textContent = '🔎 Reading the receipt…';
     try {
+      const up = await prepReceipt(f);      // shrink / convert HEIC so the scanner can read it
       const fd = new FormData();
-      fd.append('receipt', f, f.name);
+      fd.append('receipt', up, up.name);
       const r = await fetch('/api/scan-receipt', { method: 'POST', body: fd });
       if (r.status === 503) { status.textContent = ''; return; }   // not configured — stay quiet
       const g = await r.json().catch(() => ({}));
@@ -1239,9 +1245,12 @@ async function renderReceipts() {
       <div class="panel receipt-card" data-rc="${r.id}">
         <div class="receipt-head">
           <a class="mini-chip" href="/api/file/${r.file}" target="_blank" rel="noopener">📄 View receipt</a>
-          <button class="del" data-delrec="${r.id}" title="Delete receipt">✕</button>
+          <span>
+            <button class="del" data-rescan="${r.id}" title="Try reading it again">🔎</button>
+            <button class="del" data-delrec="${r.id}" title="Delete receipt">✕</button>
+          </span>
         </div>
-        ${r.scanned ? '' : `<div class="scan-status">Couldn't read this one automatically — fill it in below.</div>`}
+        ${r.scanned ? '' : `<div class="scan-status">⚠️ ${esc(r.scanError || "Couldn't read this one automatically")} — fill it in below.</div>`}
         <div class="form-grid" style="margin-top:12px">
           <div class="full"><label class="f">Description</label><input class="f" data-f="desc" value="${esc(r.desc)}" placeholder="What was bought" /></div>
           <div><label class="f">Cost ($)</label><input class="f" data-f="amount" type="number" step="0.01" min="0" value="${r.amount ?? ''}" placeholder="0.00" /></div>
@@ -1262,7 +1271,9 @@ async function renderReceipts() {
       </div>`).join('')}</div>`
     : '<div class="panel muted">Nothing waiting. Upload a receipt above and it will show up here ready to file.</div>'}`;
 
-  wirePhotoUploader(null, () => renderReceipts(), { endpoint: '/api/receipts', field: 'receipt', thumbs: false });
+  wirePhotoUploader(null, () => renderReceipts(), {
+    endpoint: '/api/receipts', field: 'receipt', thumbs: false, prepare: prepReceipt,
+  });
 
   // edits save on blur, so a half-typed cost is never pushed
   document.querySelectorAll('.receipt-card').forEach((card) => {
@@ -1296,6 +1307,20 @@ async function renderReceipts() {
       } catch (err) { note.textContent = err.message; }
     });
   });
+  document.querySelectorAll('[data-rescan]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const note = document.querySelector(`[data-save="${b.dataset.rescan}"]`);
+      b.disabled = true;
+      if (note) note.textContent = 'Reading again…';
+      try {
+        await api('/api/receipts/' + b.dataset.rescan + '/rescan', { method: 'POST' });
+        renderReceipts();
+      } catch (err) {
+        if (note) note.textContent = err.message;
+        b.disabled = false;
+      }
+    })
+  );
   document.querySelectorAll('[data-delrec]').forEach((b) =>
     b.addEventListener('click', async () => {
       if (!confirm('Delete this receipt? The file is removed too.')) return;
@@ -1303,6 +1328,358 @@ async function renderReceipts() {
       renderReceipts();
     })
   );
+}
+
+/* ---------- CHECK DETAIL (admin) ----------
+ * One check, its photo, and the line-by-line breakdown. Each line points at a job;
+ * doing so files that amount as the job's cost. The total sits under the check number. */
+async function renderCheck(id) {
+  let k;
+  try { k = await api('/api/checks/' + id); }
+  catch { $('#main').innerHTML = '<div class="panel">Check not found.</div>'; return; }
+  const [projects, contractors] = await Promise.all([api('/api/projects'), api('/api/contractors')]);
+  const jobs = projects.slice().sort((a, b) => a.name.localeCompare(b.name));
+  const lines = k.lines || [];
+  const unassigned = lines.filter((l) => !l.projectId).length;
+
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>Check ${k.number ? '#' + esc(k.number) : ''}</h1>
+      <div>
+        ${k.contractorId ? `<a class="btn" href="#/contractor/${k.contractorId}">← ${esc(k.contractorName)}</a>` : '<a class="btn" href="#/contractors">← Contractors</a>'}
+        <button class="btn danger" id="delCheckBtn">Delete</button>
+      </div>
+    </div>
+
+    <div class="check-summary">
+      <div>
+        <div class="k">Check Number</div>
+        <div class="check-num">${k.number ? '#' + esc(k.number) : '<span class="muted">Not read</span>'}</div>
+        <div class="k" style="margin-top:12px">Total</div>
+        <div class="check-total">${money(k.total)}</div>
+      </div>
+      <div class="check-meta">
+        <div><div class="k">Paid To</div><div class="v">${k.contractorName ? `<a href="#/contractor/${k.contractorId}">${esc(k.contractorName)}</a>` : `<span class="muted">${esc(k.payee || 'Unknown')} — not linked</span>`}</div></div>
+        <div><div class="k">Date</div><div class="v">${fmtDate(k.date)}</div></div>
+        <div><div class="k">Lines</div><div class="v">${lines.length}${unassigned ? ` <span class="badge badge-amber">${unassigned} unassigned</span>` : ''}</div></div>
+      </div>
+    </div>
+
+    ${k.scanned ? '' : `<div class="panel scan-status">⚠️ ${esc(k.scanError || 'Could not read this check automatically')} — fill the details in below.</div>`}
+
+    <div class="panel">
+      <h3>Check Details</h3>
+      <div class="form-grid">
+        <div><label class="f">Check Number</label><input class="f" id="ckNum" value="${esc(k.number)}" /></div>
+        <div><label class="f">Date</label><input class="f" id="ckDate" type="date" value="${k.date || ''}" /></div>
+        <div class="full"><label class="f">Paid To</label>
+          <select class="f" id="ckCon">
+            <option value="">— Not linked to a contractor —</option>
+            ${contractors.map((c) => `<option value="${c.id}" ${k.contractorId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+          </select>
+          ${!k.contractorId && k.payee ? `<div class="scan-status">Read as “${esc(k.payee)}” — no contractor by that name. <button class="btn small gold" id="ckMakeCon">Create “${esc(k.payee)}”</button></div>` : ''}
+        </div>
+        <div class="full" style="text-align:right"><button class="btn" id="ckSave">Save Details</button> <span class="muted" id="ckNote"></span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Breakdown</h3>
+      ${lines.length ? `
+      <table class="check-lines">
+        <thead><tr><th>What For</th><th class="right">Amount</th><th>Job</th><th style="width:36px"></th></tr></thead>
+        <tbody>
+          ${lines.map((l) => `
+          <tr data-line="${l.id}">
+            <td><input class="f" data-lf="desc" value="${esc(l.desc)}" /></td>
+            <td class="right"><input class="f right" data-lf="amount" type="number" step="0.01" min="0" value="${l.amount ?? ''}" /></td>
+            <td>
+              <select class="f" data-lf="projectId">
+                <option value="">— Not assigned —</option>
+                ${jobs.map((p) => `<option value="${p.id}" ${l.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+              </select>
+            </td>
+            <td class="right"><button class="del" data-delline="${l.id}" title="Remove line">✕</button></td>
+          </tr>`).join('')}
+          <tr class="totals-row">
+            <td>Total</td><td class="right" style="color:var(--red)">${money(k.total)}</td><td colspan="2"></td>
+          </tr>
+        </tbody>
+      </table>` : '<div class="muted">No lines on this check yet. Add one below.</div>'}
+      <div class="form-grid" style="margin-top:16px">
+        <div><label class="f">What For</label><input class="f" id="ckLineDesc" placeholder="e.g. Rockville permit" /></div>
+        <div><label class="f">Amount ($)</label><input class="f" id="ckLineAmt" type="number" step="0.01" min="0" placeholder="0.00" /></div>
+        <div style="display:flex;align-items:flex-end"><button class="btn gold" id="ckAddLine">+ Add Line</button></div>
+      </div>
+      <div class="muted" style="margin-top:10px">Picking a job files that amount as a cost on the job, so its profit stays right.</div>
+    </div>
+
+    <div class="panel">
+      <h3>Check Image</h3>
+      <a href="/api/file/${k.file}" target="_blank" rel="noopener"><img class="check-img" src="/api/file/${k.file}" alt="Check ${esc(k.number)}" /></a>
+    </div>`;
+
+  const note = $('#ckNote');
+  $('#ckSave').addEventListener('click', async () => {
+    try {
+      await api('/api/checks/' + id, {
+        method: 'PUT',
+        json: { number: $('#ckNum').value.trim(), date: $('#ckDate').value, contractorId: $('#ckCon').value || null },
+      });
+      renderCheck(id);
+    } catch (err) { note.textContent = err.message; }
+  });
+  if ($('#ckMakeCon')) $('#ckMakeCon').addEventListener('click', () => {
+    contractorModal({ name: k.payee }, async (saved) => {
+      await api('/api/checks/' + id, { method: 'PUT', json: { contractorId: saved.id } });
+      renderCheck(id);
+    });
+  });
+  $('#ckAddLine').addEventListener('click', async () => {
+    const desc = $('#ckLineDesc').value.trim();
+    const amount = parseFloat($('#ckLineAmt').value);
+    if (!desc && !amount) return;
+    await api(`/api/checks/${id}/lines`, { method: 'POST', json: { desc, amount } });
+    renderCheck(id);
+  });
+  document.querySelectorAll('tr[data-line]').forEach((row) => {
+    const lid = row.dataset.line;
+    const val = (f) => row.querySelector(`[data-lf="${f}"]`).value;
+    const save = async (reload) => {
+      try {
+        await api(`/api/checks/${id}/lines/${lid}`, {
+          method: 'PUT',
+          json: { desc: val('desc'), amount: val('amount'), projectId: val('projectId') || null },
+        });
+        if (reload) renderCheck(id);
+      } catch (err) { alert(err.message); renderCheck(id); }
+    };
+    row.querySelector('[data-lf="desc"]').addEventListener('blur', () => save(false));
+    row.querySelector('[data-lf="amount"]').addEventListener('blur', () => save(true));
+    row.querySelector('[data-lf="projectId"]').addEventListener('change', () => save(true));
+  });
+  document.querySelectorAll('[data-delline]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Remove this line? Any job cost it created is removed too.')) return;
+      await api(`/api/checks/${id}/lines/${b.dataset.delline}`, { method: 'DELETE' });
+      renderCheck(id);
+    })
+  );
+  $('#delCheckBtn').addEventListener('click', async () => {
+    if (!confirm('Delete this check? Every job cost it created is removed too.')) return;
+    await api('/api/checks/' + id, { method: 'DELETE' });
+    location.hash = k.contractorId ? '#/contractor/' + k.contractorId : '#/contractors';
+  });
+}
+
+/* ---------- CONTRACTORS (admin) ----------
+ * Subs and vendors you write checks to. Tax IDs are encrypted server-side; the list
+ * only ever holds the last 4, and the full number arrives only when you tap Reveal. */
+const taxMask = (c) => (c.taxIdLast4
+  ? (c.taxIdType === 'ssn' ? '•••-••-' : '••-•••') + c.taxIdLast4
+  : '<span class="muted">—</span>');
+
+function contractorFormHtml(c) {
+  const e = c || {};
+  return `
+    <div class="full"><label class="f">Full Name *</label><input class="f" name="name" required value="${esc(e.name || '')}" placeholder="Business or person the check is written to" /></div>
+    <div><label class="f">ID Type</label>
+      <select class="f" name="taxIdType">
+        <option value="ein" ${e.taxIdType !== 'ssn' ? 'selected' : ''}>EIN</option>
+        <option value="ssn" ${e.taxIdType === 'ssn' ? 'selected' : ''}>SSN</option>
+      </select>
+    </div>
+    <div><label class="f">EIN / SSN ${e.taxIdLast4 ? '(on file — leave blank to keep)' : ''}</label>
+      <input class="f" name="taxId" inputmode="numeric" autocomplete="off" placeholder="9 digits" /></div>
+    <div><label class="f">Phone</label><input class="f" name="phone" value="${esc(e.phone || '')}" /></div>
+    <div><label class="f">Email</label><input class="f" name="email" type="email" value="${esc(e.email || '')}" /></div>
+    <div class="full"><label class="f">Notes</label><input class="f" name="notes" value="${esc(e.notes || '')}" placeholder="Trade, crew size, anything worth remembering" /></div>`;
+}
+
+function contractorModal(c, onSaved) {
+  openModal(`
+    <h2>${c ? 'Edit Contractor' : 'Add Contractor'}</h2>
+    <form id="conForm" class="form-grid">
+      ${contractorFormHtml(c)}
+      <div class="modal-actions full">
+        <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn gold">${c ? 'Save Changes' : 'Add Contractor'}</button>
+      </div>
+      <div class="error full" id="conErr"></div>
+    </form>`);
+  $('#conForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    if (c && !f.taxId) delete f.taxId;           // blank means "leave what's on file"
+    try {
+      const saved = c
+        ? await api('/api/contractors/' + c.id, { method: 'PUT', json: f })
+        : await api('/api/contractors', { method: 'POST', json: f });
+      closeModal(); onSaved(saved);
+    } catch (err) { $('#conErr').textContent = err.message; }
+  });
+}
+
+async function renderContractors() {
+  const [list, checks] = await Promise.all([api('/api/contractors'), api('/api/checks')]);
+  const paid = list.reduce((s, c) => s + (c.paidTotal || 0), 0);
+  const loose = checks.filter((k) => !k.contractorId);
+  const openLines = checks.reduce((s, k) => s + (k.lines || []).filter((l) => !l.projectId).length, 0);
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>Contractors</h1>
+      <button class="btn gold" id="newConBtn">+ Add Contractor</button>
+    </div>
+
+    <div class="panel">
+      <h3>Upload a Check</h3>
+      <input type="file" id="ckFile" accept=".pdf,image/*" style="display:none" />
+      <div class="photo-add-btns">
+        <button class="btn gold" id="ckUpBtn">📷 Snap / Choose Check</button>
+      </div>
+      <div class="scan-status" id="ckUpStatus"></div>
+      <div class="muted" style="margin-top:8px">
+        The check number, who it was written to, and the handwritten lines are read for you. You then point each line at a job.
+      </div>
+    </div>
+
+    ${loose.length || openLines ? `
+    <div class="panel">
+      <h3>Needs Attention</h3>
+      ${loose.length ? `<div style="margin-bottom:10px">${loose.length} check${loose.length === 1 ? '' : 's'} not linked to a contractor:
+        ${loose.map((k) => `<a class="mini-chip" href="#/check/${k.id}">${k.number ? '#' + esc(k.number) : 'No number'}${k.payee ? ' — ' + esc(k.payee) : ''}</a>`).join('')}</div>` : ''}
+      ${openLines ? `<div class="muted">${openLines} check line${openLines === 1 ? '' : 's'} still need a job assigned — their cost isn't counted against any job yet.</div>` : ''}
+    </div>` : ''}
+
+    <div class="panel">
+      ${list.length ? `
+      <table>
+        <thead><tr><th>Name</th><th>EIN / SSN</th><th>Contact</th><th class="right">Checks</th><th class="right">Paid</th><th class="right">Actions</th></tr></thead>
+        <tbody>
+          ${list.map((c) => `
+          <tr>
+            <td><a href="#/contractor/${c.id}"><b>${esc(c.name)}</b></a></td>
+            <td class="taxid-cell">
+              <span class="lockbox-code" data-taxid="${c.id}" title="${c.hasTaxId ? 'Tap to reveal' : ''}">${taxMask(c)}</span>
+            </td>
+            <td>${[c.phone, c.email].filter(Boolean).map(esc).join('<br>') || '<span class="muted">—</span>'}</td>
+            <td class="right">${c.checkCount}</td>
+            <td class="right"><b>${money(c.paidTotal)}</b></td>
+            <td class="right">
+              <button class="btn small" data-edcon="${c.id}">Edit</button>
+              <button class="btn small danger" data-delcon="${c.id}">Delete</button>
+            </td>
+          </tr>`).join('')}
+          <tr class="totals-row"><td colspan="4">Total paid out</td><td class="right">${money(paid)}</td><td></td></tr>
+        </tbody>
+      </table>` : '<div class="muted">No contractors yet. Add one, or upload a check and the portal will offer to create them for you.</div>'}
+    </div>
+    <div class="muted" style="margin-top:-8px">
+      🔒 Tax IDs are encrypted before they are saved and are only shown when you tap one. Every reveal is written to the server log.
+    </div>`;
+
+  $('#ckUpBtn').addEventListener('click', () => $('#ckFile').click());
+  $('#ckFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    const status = $('#ckUpStatus');
+    status.className = 'scan-status';
+    status.textContent = '🔎 Reading the check…';
+    try {
+      const up = await prepReceipt(f);
+      const fd = new FormData();
+      fd.append('check', up, up.name);
+      const k = await api('/api/checks', { method: 'POST', body: fd });
+      // unknown payee — offer to create them rather than silently leaving it unlinked
+      if (!k.payeeMatched && k.payee &&
+          confirm(`This check was written to "${k.payee}", who isn't in your contractors.\n\nCreate them now?`)) {
+        contractorModal({ name: k.payee }, async (saved) => {
+          await api('/api/checks/' + k.id, { method: 'PUT', json: { contractorId: saved.id } });
+          location.hash = '#/check/' + k.id;
+        });
+        return;
+      }
+      location.hash = '#/check/' + k.id;
+    } catch (err) { status.className = 'scan-status'; status.textContent = err.message; }
+  });
+
+  $('#newConBtn').addEventListener('click', () => contractorModal(null, () => renderContractors()));
+  document.querySelectorAll('[data-edcon]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const c = list.find((x) => x.id === Number(b.dataset.edcon));
+      contractorModal(c, () => renderContractors());
+    })
+  );
+  document.querySelectorAll('[data-delcon]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Delete this contractor?')) return;
+      try {
+        await api('/api/contractors/' + b.dataset.delcon, { method: 'DELETE' });
+        renderContractors();
+      } catch (err) { alert(err.message); }
+    })
+  );
+  wireTaxReveal(list);
+}
+
+/* Tap a masked tax ID to fetch the full number; it hides itself again shortly after. */
+function wireTaxReveal(list) {
+  document.querySelectorAll('[data-taxid]').forEach((el) =>
+    el.addEventListener('click', async () => {
+      const c = list.find((x) => x.id === Number(el.dataset.taxid));
+      if (!c || !c.hasTaxId || el.dataset.busy) return;
+      el.dataset.busy = '1';
+      const masked = el.innerHTML;
+      try {
+        const r = await api('/api/contractors/' + c.id + '/reveal', { method: 'POST' });
+        el.textContent = r.taxId;
+        setTimeout(() => { el.innerHTML = masked; delete el.dataset.busy; }, 15000);
+      } catch (err) { el.textContent = err.message; setTimeout(() => { el.innerHTML = masked; delete el.dataset.busy; }, 4000); }
+    })
+  );
+}
+
+async function renderContractor(id) {
+  const [list, checks] = await Promise.all([api('/api/contractors'), api('/api/checks')]);
+  const c = list.find((x) => x.id === id);
+  if (!c) { $('#main').innerHTML = '<div class="panel">Contractor not found.</div>'; return; }
+  const theirs = checks.filter((k) => k.contractorId === id);
+  const total = theirs.reduce((s, k) => s + k.total, 0);
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>${esc(c.name)}</h1>
+      <div><button class="btn" id="edConBtn">Edit</button> <a class="btn" href="#/contractors">← All Contractors</a></div>
+    </div>
+    <div class="panel">
+      <div class="info-grid">
+        <div><div class="k">EIN / SSN</div><div class="v"><span class="lockbox-code" data-taxid="${c.id}" title="${c.hasTaxId ? 'Tap to reveal' : ''}">${taxMask(c)}</span></div></div>
+        <div><div class="k">Phone</div><div class="v">${c.phone ? esc(c.phone) : '<span class="muted">—</span>'}</div></div>
+        <div><div class="k">Email</div><div class="v">${c.email ? esc(c.email) : '<span class="muted">—</span>'}</div></div>
+        <div><div class="k">Checks Written</div><div class="v">${theirs.length}</div></div>
+        <div><div class="k">Total Paid</div><div class="v" style="color:var(--red)">${money(total)}</div></div>
+      </div>
+      ${c.notes ? `<div class="muted" style="margin-top:14px">${esc(c.notes)}</div>` : ''}
+    </div>
+    <div class="panel">
+      <h3>Checks</h3>
+      ${theirs.length ? `
+      <table>
+        <thead><tr><th>Check #</th><th>Date</th><th>For</th><th class="right">Amount</th></tr></thead>
+        <tbody>
+          ${theirs.map((k) => `
+          <tr>
+            <td><a href="#/check/${k.id}"><b>${k.number ? '#' + esc(k.number) : 'No number'}</b></a></td>
+            <td>${fmtDate(k.date)}</td>
+            <td>${(k.lines || []).length ? esc((k.lines || []).map((l) => l.desc).filter(Boolean).join(', ')).slice(0, 90) : '<span class="muted">—</span>'}</td>
+            <td class="right"><b>${money(k.total)}</b></td>
+          </tr>`).join('')}
+          <tr class="totals-row"><td colspan="3">Total paid (${theirs.length} check${theirs.length === 1 ? '' : 's'})</td><td class="right" style="color:var(--red)">${money(total)}</td></tr>
+        </tbody>
+      </table>` : '<div class="muted">No checks on file for this contractor yet.</div>'}
+    </div>`;
+  $('#edConBtn').addEventListener('click', () => contractorModal(c, () => renderContractor(id)));
+  wireTaxReveal(list);
 }
 
 /* ---------- CUSTOMERS ---------- */
@@ -1527,6 +1904,27 @@ async function heicToJpeg(file) {
   } catch { return file; }
 }
 
+/* Prepare a receipt photo for scanning: cap the long edge at 1568px (the most the
+ * vision model resolves anyway), re-encode as JPEG. This does three jobs at once —
+ * converts iPhone HEIC to a format the scanner accepts, keeps a 5 MB phone photo
+ * under the upload limit, and speeds the upload up on a site connection.
+ * Returns the file untouched if it can't be decoded, so nothing is ever lost. */
+async function prepReceipt(file) {
+  if (/\.pdf$/i.test(file.name)) return file;              // PDFs go up as-is
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 1568 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bmp.width * scale));
+    c.height = Math.max(1, Math.round(bmp.height * scale));
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close();
+    const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.85));
+    if (!blob) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/, '') + '.jpg', { type: 'image/jpeg' });
+  } catch { return file; }
+}
+
 /* Make a small JPEG thumbnail in the browser before uploading (returns null if the
  * image can't be decoded, e.g. HEIC on some browsers — the full photo is used then). */
 async function makeThumb(file, maxDim = 480) {
@@ -1633,7 +2031,7 @@ function wirePhotoUploader(jobId, onDone, opts = {}) {
     const send = async ({ file }) => {
       // PDFs go up untouched; images get the HEIC fix and a thumbnail where wanted
       const isPdf = /\.pdf$/i.test(file.name);
-      const up = isPdf ? file : await heicToJpeg(file);
+      const up = isPdf ? file : await (opts.prepare || heicToJpeg)(file);
       const fd = new FormData();
       fd.append(field, up, up.name || 'upload.jpg');
       if (wantThumbs && !isPdf) {

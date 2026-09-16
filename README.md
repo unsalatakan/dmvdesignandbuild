@@ -62,12 +62,34 @@ Notes:
 - Costs roughly **a quarter of a cent per receipt** — about $0.25 for 100 receipts.
 - Without the key the feature is simply off; the invoice form works as normal manual entry.
 - Optional `SCAN_MODEL` env var overrides which model is used.
-- If a receipt can't be read the form stays blank and tells you to enter it by hand. Nothing breaks and no invoice is lost.
+- If a receipt can't be read the form stays blank and tells you why. Nothing breaks and no receipt is lost — tap 🔎 on a receipt card to try reading it again.
+- **Getting good reads:** fill the frame with the receipt, flat and well lit. A long receipt shot from far away leaves the text too small to resolve — for a very long one, crop to the part with the total, or photograph it in two goes.
+- iPhone HEIC photos are converted in the browser before upload, and big photos are shrunk, so neither format nor size should ever block a scan.
 - Receipts are sent to Anthropic's API to be read. They are not used to train models.
+
+## Contractors and checks (admin only)
+
+The **Contractors** tab holds the subs and suppliers you write checks to — name, EIN or SSN, contact details.
+
+Upload a photo of a check (or its carbon stub) and the portal reads the check number, who it was made out to, the date, and the handwritten line items. If the payee isn't a contractor you already have, it offers to create them. On the check page you point each line at a job, which files that amount as a cost on that job — so a single check covering four jobs splits correctly across all four. The total sits under the check number, and every check appears on its contractor's page; click one for the breakdown.
+
+Editing stays consistent: change a line's amount and the job's cost follows, move it to another job and the cost moves with it, delete the check and every cost it created is removed.
+
+**Tax IDs are encrypted at rest.** To enable that, set a second environment variable alongside your API key:
+
+```
+TAXID_KEY=some-long-random-passphrase
+```
+
+- Without it the portal refuses to store tax IDs at all rather than writing them in plain text.
+- **Keep a copy of this passphrase somewhere safe.** If you lose it or change it, the stored numbers cannot be recovered — only the last 4 digits survive, and you'd have to re-enter each contractor's number.
+- Numbers show masked (`••-•••6789`); tapping one fetches the full value, hides it again after 15 seconds, and writes a line to the server log.
+- Contractors, checks, check images and tax IDs are admin-only. Project managers and customers cannot see any of it.
 
 ## Notes
 
 - All data is stored in `data/db.json`; uploaded files in `uploads/`. Back up these two to back up everything.
+- `db.json` and your backups contain business data. Tax IDs inside it are encrypted, but treat the file as sensitive.
 - Restarting the server logs everyone out (they just sign in again).
 - To use on your office network, other devices can reach it at `http://YOUR-COMPUTER-IP:3000`. For customers to log in from anywhere, host this folder on any Node.js host (Render, Railway, a VPS) — it runs as-is.
 - To change the admin password: delete the admin entry in `data/db.json` is not needed — just edit it: replace the `password` value with the SHA-256 hash of your new password, or ask me to change it for you.

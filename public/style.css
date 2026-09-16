@@ -157,6 +157,23 @@ html:not(.light) .photo-queue { border-color: rgba(255,255,255,0.2); background:
 .photo-item.pending { cursor: default; outline: 2px solid var(--gold); outline-offset: -2px; }
 .photo-item.pending img { opacity: 0.92; }
 
+/* checks */
+.check-summary { display: grid; grid-template-columns: minmax(180px, 240px) 1fr; gap: 20px; background: var(--panel); border-radius: var(--radius); box-shadow: 0 4px 14px rgba(0,0,0,0.25); padding: 20px; margin-bottom: 20px; }
+html:not(.light) .check-summary { background: #16243d; border: 1px solid rgba(255,255,255,0.07); color: #e9eef6; }
+.check-summary .k { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.5px; }
+.check-summary .v { font-size: 15px; font-weight: 600; margin-top: 3px; }
+.check-num { font-size: 30px; font-weight: 800; line-height: 1.1; }
+.check-total { font-size: 26px; font-weight: 800; color: var(--red); line-height: 1.1; }
+.check-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; align-content: start; }
+.check-lines input.f { padding: 7px 10px; font-size: 13.5px; }
+.check-lines input.right { text-align: right; }
+.check-img { max-width: 100%; border-radius: 8px; display: block; }
+.taxid-cell .lockbox-code { font-size: 13px; }
+@media (max-width: 800px) {
+  .check-summary { grid-template-columns: 1fr; }
+  .check-lines { min-width: 620px; }
+}
+
 /* receipt inbox */
 .receipt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
 .receipt-card { margin-bottom: 0; }

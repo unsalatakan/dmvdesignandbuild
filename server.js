@@ -95,6 +95,37 @@ async function deleteFile(name) {
   try { fs.unlinkSync(path.join(UPLOAD_DIR, name)); } catch {}
 }
 
+/* ================= tax ID encryption =================
+ * Contractor EIN/SSN is encrypted at rest with AES-256-GCM so the raw number never
+ * sits in db.json. The key comes from env var TAXID_KEY (any passphrase; it is
+ * stretched with scrypt). Lose the key and the stored numbers are unrecoverable —
+ * only the last 4 digits, which are kept in the clear for matching, survive. */
+const TAXID_KEY = (process.env.TAXID_KEY || '').trim();
+let taxKey = null;
+function taxKeyOrNull() {
+  if (!TAXID_KEY) return null;
+  if (!taxKey) taxKey = crypto.scryptSync(TAXID_KEY, 'dmv-portal-taxid', 32);
+  return taxKey;
+}
+function encryptTaxId(plain) {
+  const key = taxKeyOrNull();
+  if (!key) return null;
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([c.update(String(plain), 'utf8'), c.final()]);
+  return [iv.toString('base64'), c.getAuthTag().toString('base64'), enc.toString('base64')].join('.');
+}
+function decryptTaxId(blob) {
+  const key = taxKeyOrNull();
+  if (!key || !blob) return null;
+  try {
+    const [iv, tag, data] = String(blob).split('.');
+    const d = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'));
+    d.setAuthTag(Buffer.from(tag, 'base64'));
+    return Buffer.concat([d.update(Buffer.from(data, 'base64')), d.final()]).toString('utf8');
+  } catch { return null; }   // wrong key, or the value was tampered with
+}
+
 /* ================= tiny JSON database ================= */
 const hash = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 let db;
@@ -105,6 +136,8 @@ function loadDb() {
   if (!db.sessions) db.sessions = {};
   if (!db.todos) db.todos = [];        // general to-do list, not tied to any job
   if (!db.receipts) db.receipts = [];  // receipt inbox, waiting to be filed to a job
+  if (!db.contractors) db.contractors = [];
+  if (!db.checks) db.checks = [];
   if (!db.users.some((u) => u.role === 'admin')) {
     db.users.push({ id: nextId(), username: 'dmv', password: hash('dmv123'), role: 'admin', name: 'DMV Design and Build' });
     saveDb();
@@ -742,6 +775,9 @@ route('PUT', /^\/api\/projects\/(\d+)\/materials\/(\d+)$/, (req, res, m, body, u
  * Set env var ANTHROPIC_API_KEY to enable; without it the endpoint reports
  * "not configured" and the invoice form simply stays on manual entry. */
 const SCAN_MODEL = process.env.SCAN_MODEL || 'claude-haiku-4-5-20251001';
+/* Hosting dashboards happily store a key with stray quotes or whitespace around it,
+ * which the API then rejects as invalid. Clean it up rather than fail mysteriously. */
+const SCAN_KEY = (process.env.ANTHROPIC_API_KEY || '').trim().replace(/^["']|["']$/g, '');
 const SCAN_MEDIA = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
 const SCAN_PROMPT = 'This is a receipt or supplier invoice for a construction job. '
   + 'Reply with ONLY a JSON object, no prose and no code fence, using exactly these keys: '
@@ -753,10 +789,21 @@ const SCAN_PROMPT = 'This is a receipt or supplier invoice for a construction jo
 
 /* Reads one receipt. Returns the parsed fields, or throws with a message fit to show. */
 async function scanReceipt(f) {
-  if (!process.env.ANTHROPIC_API_KEY) { const e = new Error('Receipt scanning is not set up on this server.'); e.code = 503; throw e; }
-  const media = SCAN_MEDIA[path.extname(f.originalname).toLowerCase()];
-  if (!media) { const e = new Error('Receipt must be a PDF or an image'); e.code = 400; throw e; }
-  if (f.buffer.length > 4.5 * 1024 * 1024) { const e = new Error('Receipt is too large to scan (max ~4.5 MB)'); e.code = 400; throw e; }
+  if (!SCAN_KEY) { const e = new Error('Receipt scanning is not set up on this server.'); e.code = 503; throw e; }
+  const ext = path.extname(f.originalname).toLowerCase();
+  const media = SCAN_MEDIA[ext];
+  if (!media) {
+    // HEIC is what an iPhone shoots by default; the browser converts it before upload,
+    // so reaching here means that conversion did not happen.
+    const e = new Error(/\.hei[cf]$/.test(ext)
+      ? 'iPhone HEIC photo could not be converted for scanning'
+      : 'Receipt must be a PDF or an image');
+    e.code = 400; throw e;
+  }
+  if (f.buffer.length > 4.5 * 1024 * 1024) {
+    const e = new Error('Photo too large to scan (' + (f.buffer.length / 1048576).toFixed(1) + ' MB, max 4.5 MB)');
+    e.code = 400; throw e;
+  }
 
   const source = { type: 'base64', media_type: media, data: f.buffer.toString('base64') };
   const content = [
@@ -769,14 +816,28 @@ async function scanReceipt(f) {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'x-api-key': SCAN_KEY,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
       body: JSON.stringify({ model: SCAN_MODEL, max_tokens: 300, messages: [{ role: 'user', content }] }),
       signal: AbortSignal.timeout(45000),
     });
-    if (!r.ok) { console.error('Receipt scan rejected (' + r.status + '):', await r.text()); throw unreadable(); }
+    if (!r.ok) {
+      const detail = await r.text();
+      console.error('Receipt scan rejected (' + r.status + '):', detail);
+      // these two are setup problems, not unreadable receipts — say so plainly
+      if (r.status === 401 || r.status === 403) {
+        const e = new Error('The API key is being rejected. Check ANTHROPIC_API_KEY on the server.');
+        e.code = 502; throw e;
+      }
+      if (r.status === 400 && /credit/i.test(detail)) {
+        const e = new Error('Out of API credits. Top up at console.anthropic.com.');
+        e.code = 502; throw e;
+      }
+      if (r.status === 429) { const e = new Error('Scanning is rate limited right now. Try again in a moment.'); e.code = 502; throw e; }
+      throw unreadable();
+    }
     out = await r.json();
   } catch (e) {
     if (e.code) throw e;
@@ -896,6 +957,37 @@ route('POST', /^\/api\/receipts$/, async (req, res, m, body, user) => {
   db.receipts.push(r); saveDb(); json(res, 200, r);
 }, { staff: true, multipart: true });
 
+/* Read a stored file back out, wherever it lives. */
+async function readStoredFile(name) {
+  const fp = path.join(UPLOAD_DIR, name);
+  if (fs.existsSync(fp)) return fs.readFileSync(fp);
+  if (R2) {
+    try { const r = await fetch(r2PresignGet(name)); if (r.ok) return Buffer.from(await r.arrayBuffer()); } catch {}
+  }
+  return null;
+}
+
+/* Try reading a receipt again — for when the first attempt hit a rate limit or a
+ * hiccup. Only fills fields that are still empty, so corrections aren't overwritten. */
+route('POST', /^\/api\/receipts\/(\d+)\/rescan$/, async (req, res, m) => {
+  const r = (db.receipts || []).find((x) => x.id === Number(m[1]));
+  if (!r) return json(res, 404, { error: 'Receipt not found' });
+  const buffer = await readStoredFile(r.file);
+  if (!buffer) return json(res, 400, { error: 'The receipt file could not be found on this server' });
+  try {
+    const g = await scanReceipt({ originalname: r.file, buffer });
+    if (!r.desc && g.desc) r.desc = g.desc;
+    if (!r.paidTo && g.vendor) r.paidTo = g.vendor;
+    if (!r.amount && g.amount) r.amount = g.amount;
+    if (g.date) r.date = g.date;
+    r.scanned = true; r.scanError = null;
+    saveDb(); json(res, 200, r);
+  } catch (e) {
+    r.scanError = e.message; saveDb();
+    json(res, e.code || 502, { error: e.message });
+  }
+}, { staff: true });
+
 route('PUT', /^\/api\/receipts\/(\d+)$/, (req, res, m, body) => {
   const r = (db.receipts || []).find((x) => x.id === Number(m[1]));
   if (!r) return json(res, 404, { error: 'Receipt not found' });
@@ -937,6 +1029,327 @@ route('DELETE', /^\/api\/receipts\/(\d+)$/, async (req, res, m) => {
   db.receipts = (db.receipts || []).filter((x) => x.id !== Number(m[1]));
   saveDb(); json(res, 200, { ok: true });
 }, { staff: true });
+
+/* ---- checks ----
+ * A check written to a contractor, often covering several jobs at once. The photo is
+ * read for the check number, who it was made out to, and the handwritten line items;
+ * each line then gets pointed at a job, which files it as that job's cost. */
+const CHECK_PROMPT = 'This is a photograph of a business check or its carbon-copy stub. '
+  + 'Reply with ONLY a JSON object, no prose and no code fence, using exactly these keys: '
+  + '"number" (the check number, usually printed in the top-right corner, digits only), '
+  + '"payee" (who the check was written to — the name after "Pay to the order of", or the name written at the top of a stub), '
+  + '"date" (the date on the check as YYYY-MM-DD), '
+  + '"total" (the total amount of the check as a plain number, or null if not clearly written), '
+  + '"lines" (an array of the individual items written on it, each {"desc": short label as written, "amount": number}). '
+  + 'The writing may be handwritten and untidy — transcribe what you see, do not tidy names up. '
+  + 'Use null for any field you cannot read with confidence, and an empty array if there are no itemised lines. '
+  + 'Never guess at an amount.';
+
+async function scanCheck(f) {
+  if (!SCAN_KEY) { const e = new Error('Check scanning is not set up on this server.'); e.code = 503; throw e; }
+  const media = SCAN_MEDIA[path.extname(f.originalname).toLowerCase()];
+  if (!media) { const e = new Error('Check must be a PDF or an image'); e.code = 400; throw e; }
+  if (f.buffer.length > 4.5 * 1024 * 1024) {
+    const e = new Error('Photo too large to scan (' + (f.buffer.length / 1048576).toFixed(1) + ' MB, max 4.5 MB)');
+    e.code = 400; throw e;
+  }
+  const source = { type: 'base64', media_type: media, data: f.buffer.toString('base64') };
+  const content = [
+    media === 'application/pdf' ? { type: 'document', source } : { type: 'image', source },
+    { type: 'text', text: CHECK_PROMPT },
+  ];
+  const unreadable = () => { const e = new Error('Could not read the check. Enter the details by hand.'); e.code = 502; return e; };
+  let out;
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': SCAN_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: SCAN_MODEL, max_tokens: 800, messages: [{ role: 'user', content }] }),
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!r.ok) {
+      const detail = await r.text();
+      console.error('Check scan rejected (' + r.status + '):', detail);
+      if (r.status === 401 || r.status === 403) { const e = new Error('The API key is being rejected. Check ANTHROPIC_API_KEY on the server.'); e.code = 502; throw e; }
+      if (r.status === 400 && /credit/i.test(detail)) { const e = new Error('Out of API credits. Top up at console.anthropic.com.'); e.code = 502; throw e; }
+      if (r.status === 429) { const e = new Error('Scanning is rate limited right now. Try again in a moment.'); e.code = 502; throw e; }
+      throw unreadable();
+    }
+    out = await r.json();
+  } catch (e) {
+    if (e.code) throw e;
+    console.error('Check scan failed:', e.message);
+    throw unreadable();
+  }
+  const text = (out.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw unreadable();
+  let g;
+  try { g = JSON.parse(match[0]); } catch { throw unreadable(); }
+  const num = (v) => { const n = Number(String(v ?? '').replace(/[^0-9.-]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; };
+  return {
+    number: g.number ? digitsOnly(g.number).slice(0, 12) : null,
+    payee: g.payee ? String(g.payee).trim().slice(0, 80) : null,
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String(g.date || '')) ? g.date : null,
+    total: num(g.total),
+    lines: Array.isArray(g.lines)
+      ? g.lines.slice(0, 30)
+        .map((l) => ({ desc: String(l.desc || '').trim().slice(0, 120), amount: num(l.amount) }))
+        .filter((l) => l.desc || l.amount)
+      : [],
+  };
+}
+
+/* ---- contractors ----
+ * Subs and vendors you write checks to. Tax ID is encrypted at rest and never
+ * leaves the server except through the explicit reveal endpoint. Admin only. */
+const digitsOnly = (s) => String(s || '').replace(/\D/g, '');
+/* Money adds up in binary floating point, which drifts (0.1+0.2). Round every
+ * total to cents so the API never reports 5652.4800000000005. */
+const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+function contractorOut(c) {
+  const { taxIdEnc, ...rest } = c;                      // ciphertext never goes to the browser
+  const checks = (db.checks || []).filter((k) => k.contractorId === c.id);
+  return {
+    ...rest,
+    hasTaxId: !!taxIdEnc,
+    checkCount: checks.length,
+    paidTotal: cents(checks.reduce((s, k) => s + (k.lines || []).reduce((a, l) => a + (l.amount || 0), 0), 0)),
+  };
+}
+
+route('GET', /^\/api\/contractors$/, (req, res) => {
+  const list = (db.contractors || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  json(res, 200, list.map(contractorOut));
+}, { admin: true });
+
+route('POST', /^\/api\/contractors$/, (req, res, m, body) => {
+  const name = String(body.name || '').trim();
+  if (!name) return json(res, 400, { error: 'Contractor name is required' });
+  if ((db.contractors || []).some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+    return json(res, 400, { error: 'A contractor with that name already exists' });
+  }
+  const raw = digitsOnly(body.taxId);
+  if (raw && !taxKeyOrNull()) {
+    return json(res, 400, { error: 'Cannot store a tax ID: TAXID_KEY is not set on this server.' });
+  }
+  if (raw && raw.length !== 9) return json(res, 400, { error: 'EIN or SSN must be 9 digits' });
+  const c = {
+    id: nextId(),
+    name,
+    taxIdType: body.taxIdType === 'ssn' ? 'ssn' : 'ein',
+    taxIdEnc: raw ? encryptTaxId(raw) : null,
+    taxIdLast4: raw ? raw.slice(-4) : null,
+    phone: String(body.phone || '').trim(),
+    email: String(body.email || '').trim(),
+    notes: String(body.notes || '').trim(),
+    created: new Date().toISOString(),
+  };
+  db.contractors = db.contractors || [];
+  db.contractors.push(c); saveDb(); json(res, 200, contractorOut(c));
+}, { admin: true });
+
+route('PUT', /^\/api\/contractors\/(\d+)$/, (req, res, m, body) => {
+  const c = (db.contractors || []).find((x) => x.id === Number(m[1]));
+  if (!c) return json(res, 404, { error: 'Contractor not found' });
+  if (body.name !== undefined) {
+    const name = String(body.name).trim();
+    if (!name) return json(res, 400, { error: 'Contractor name is required' });
+    if ((db.contractors || []).some((x) => x.id !== c.id && x.name.toLowerCase() === name.toLowerCase())) {
+      return json(res, 400, { error: 'A contractor with that name already exists' });
+    }
+    c.name = name;
+  }
+  if (body.taxIdType !== undefined) c.taxIdType = body.taxIdType === 'ssn' ? 'ssn' : 'ein';
+  if (body.phone !== undefined) c.phone = String(body.phone).trim();
+  if (body.email !== undefined) c.email = String(body.email).trim();
+  if (body.notes !== undefined) c.notes = String(body.notes).trim();
+  if (body.taxId !== undefined) {
+    const raw = digitsOnly(body.taxId);
+    if (!raw) { c.taxIdEnc = null; c.taxIdLast4 = null; }
+    else {
+      if (!taxKeyOrNull()) return json(res, 400, { error: 'Cannot store a tax ID: TAXID_KEY is not set on this server.' });
+      if (raw.length !== 9) return json(res, 400, { error: 'EIN or SSN must be 9 digits' });
+      c.taxIdEnc = encryptTaxId(raw); c.taxIdLast4 = raw.slice(-4);
+    }
+  }
+  saveDb(); json(res, 200, contractorOut(c));
+}, { admin: true });
+
+/* The only path by which a full tax ID leaves the server. */
+route('POST', /^\/api\/contractors\/(\d+)\/reveal$/, (req, res, m, b, user) => {
+  const c = (db.contractors || []).find((x) => x.id === Number(m[1]));
+  if (!c) return json(res, 404, { error: 'Contractor not found' });
+  if (!c.taxIdEnc) return json(res, 400, { error: 'No tax ID on file' });
+  const plain = decryptTaxId(c.taxIdEnc);
+  if (!plain) return json(res, 400, { error: 'Could not decrypt — TAXID_KEY is missing or has changed.' });
+  console.log('Tax ID revealed for contractor "' + c.name + '" by ' + user.name);   // leaves a trail
+  const fmt = c.taxIdType === 'ssn'
+    ? plain.slice(0, 3) + '-' + plain.slice(3, 5) + '-' + plain.slice(5)
+    : plain.slice(0, 2) + '-' + plain.slice(2);
+  json(res, 200, { taxId: fmt });
+}, { admin: true });
+
+route('DELETE', /^\/api\/contractors\/(\d+)$/, (req, res, m) => {
+  const id = Number(m[1]);
+  if ((db.checks || []).some((k) => k.contractorId === id)) {
+    return json(res, 400, { error: 'This contractor has checks on file. Delete those first.' });
+  }
+  db.contractors = (db.contractors || []).filter((x) => x.id !== id);
+  saveDb(); json(res, 200, { ok: true });
+}, { admin: true });
+
+/* Checks: upload → scan → confirm payee → point each line at a job. */
+function checkOut(k) {
+  const c = (db.contractors || []).find((x) => x.id === k.contractorId);
+  return {
+    ...k,
+    contractorName: c ? c.name : null,
+    total: cents((k.lines || []).reduce((s, l) => s + (l.amount || 0), 0)),
+  };
+}
+
+route('GET', /^\/api\/checks$/, (req, res) => {
+  const list = (db.checks || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  json(res, 200, list.map(checkOut));
+}, { admin: true });
+
+route('GET', /^\/api\/checks\/(\d+)$/, (req, res, m) => {
+  const k = (db.checks || []).find((x) => x.id === Number(m[1]));
+  if (!k) return json(res, 404, { error: 'Check not found' });
+  json(res, 200, checkOut(k));
+}, { admin: true });
+
+route('POST', /^\/api\/checks$/, async (req, res, m, body, user) => {
+  const f = body.files && body.files.check;
+  if (!f) return json(res, 400, { error: 'No file uploaded' });
+  if (!INVOICE_FILE_RE.test(f.originalname)) return json(res, 400, { error: 'Check must be a PDF or an image' });
+  await storeFile(f);
+  let g = { number: null, payee: null, date: null, total: null, lines: [] };
+  let scanError = null;
+  try { g = await scanCheck(f); }
+  catch (e) { scanError = e.message; }          // a failed scan still keeps the photo
+  // match the payee against contractors already on file (case/spacing tolerant)
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const hit = g.payee ? (db.contractors || []).find((c) => norm(c.name) === norm(g.payee)) : null;
+  const k = {
+    id: nextId(),
+    number: g.number || '',
+    payee: g.payee || '',
+    contractorId: hit ? hit.id : null,
+    date: g.date || new Date().toISOString().slice(0, 10),
+    file: f.filename, fileName: f.originalname,
+    lines: (g.lines || []).map((l) => ({ id: nextId(), desc: l.desc, amount: l.amount, projectId: null, invoiceId: null })),
+    scanned: !scanError, scanError,
+    uploaded: new Date().toISOString(), by: user.name,
+  };
+  db.checks = db.checks || [];
+  db.checks.push(k); saveDb();
+  json(res, 200, { ...checkOut(k), payeeMatched: !!hit });
+}, { admin: true, multipart: true });
+
+route('PUT', /^\/api\/checks\/(\d+)$/, (req, res, m, body) => {
+  const k = (db.checks || []).find((x) => x.id === Number(m[1]));
+  if (!k) return json(res, 404, { error: 'Check not found' });
+  if (body.number !== undefined) k.number = String(body.number).trim();
+  if (body.payee !== undefined) k.payee = String(body.payee).trim();
+  if (body.date !== undefined) k.date = body.date || k.date;
+  if (body.contractorId !== undefined) {
+    const id = body.contractorId ? Number(body.contractorId) : null;
+    if (id && !(db.contractors || []).some((c) => c.id === id)) return json(res, 404, { error: 'Contractor not found' });
+    k.contractorId = id;
+  }
+  saveDb(); json(res, 200, checkOut(k));
+}, { admin: true });
+
+/* Add / edit / remove a line. Editing a line that is already filed to a job
+ * keeps that job's invoice in step, so the two can never disagree. */
+function syncLineInvoice(line) {
+  if (!line.invoiceId) return;
+  for (const p of db.projects) {
+    const inv = (p.invoices || []).find((x) => x.id === line.invoiceId);
+    if (inv) { inv.desc = line.desc || 'Check payment'; inv.amount = line.amount; return; }
+  }
+}
+
+route('POST', /^\/api\/checks\/(\d+)\/lines$/, (req, res, m, body) => {
+  const k = (db.checks || []).find((x) => x.id === Number(m[1]));
+  if (!k) return json(res, 404, { error: 'Check not found' });
+  k.lines = k.lines || [];
+  k.lines.push({ id: nextId(), desc: String(body.desc || '').trim(), amount: Number(body.amount) || null, projectId: null, invoiceId: null });
+  saveDb(); json(res, 200, checkOut(k));
+}, { admin: true });
+
+route('PUT', /^\/api\/checks\/(\d+)\/lines\/(\d+)$/, (req, res, m, body) => {
+  const k = (db.checks || []).find((x) => x.id === Number(m[1]));
+  if (!k) return json(res, 404, { error: 'Check not found' });
+  const line = (k.lines || []).find((l) => l.id === Number(m[2]));
+  if (!line) return json(res, 404, { error: 'Line not found' });
+  if (body.desc !== undefined) line.desc = String(body.desc).trim();
+  if (body.amount !== undefined) {
+    const a = Number(body.amount);
+    line.amount = Number.isFinite(a) && a > 0 ? a : null;
+  }
+  if (body.projectId !== undefined) {
+    const newId = body.projectId ? Number(body.projectId) : null;
+    if (newId !== line.projectId) {
+      // pull the old job's invoice before filing against the new one
+      if (line.invoiceId) {
+        for (const p of db.projects) {
+          const before = (p.invoices || []).length;
+          p.invoices = (p.invoices || []).filter((x) => x.id !== line.invoiceId);
+          if (p.invoices.length !== before) break;
+        }
+        line.invoiceId = null;
+      }
+      line.projectId = null;
+      if (newId) {
+        const p = db.projects.find((x) => x.id === newId);
+        if (!p) return json(res, 404, { error: 'Project not found' });
+        if (!line.amount) return json(res, 400, { error: 'Enter the amount before assigning this line to a job' });
+        const c = (db.contractors || []).find((x) => x.id === k.contractorId);
+        const inv = {
+          id: nextId(),
+          desc: line.desc || 'Check payment',
+          paidTo: c ? c.name : (k.payee || ''),
+          amount: line.amount,
+          date: k.date,
+          file: k.file, fileName: k.fileName,
+          checkId: k.id, checkNumber: k.number,
+          created: new Date().toISOString(),
+        };
+        p.invoices = p.invoices || [];
+        p.invoices.push(inv);
+        line.projectId = p.id; line.invoiceId = inv.id;
+      }
+    }
+  }
+  syncLineInvoice(line);
+  saveDb(); json(res, 200, checkOut(k));
+}, { admin: true });
+
+route('DELETE', /^\/api\/checks\/(\d+)\/lines\/(\d+)$/, (req, res, m) => {
+  const k = (db.checks || []).find((x) => x.id === Number(m[1]));
+  if (!k) return json(res, 404, { error: 'Check not found' });
+  const line = (k.lines || []).find((l) => l.id === Number(m[2]));
+  if (line && line.invoiceId) {
+    for (const p of db.projects) p.invoices = (p.invoices || []).filter((x) => x.id !== line.invoiceId);
+  }
+  k.lines = (k.lines || []).filter((l) => l.id !== Number(m[2]));
+  saveDb(); json(res, 200, checkOut(k));
+}, { admin: true });
+
+route('DELETE', /^\/api\/checks\/(\d+)$/, async (req, res, m) => {
+  const k = (db.checks || []).find((x) => x.id === Number(m[1]));
+  if (!k) return json(res, 404, { error: 'Check not found' });
+  // remove every job cost this check created, then the file itself
+  const ids = (k.lines || []).map((l) => l.invoiceId).filter(Boolean);
+  if (ids.length) for (const p of db.projects) p.invoices = (p.invoices || []).filter((x) => !ids.includes(x.id));
+  if (k.file) await deleteFile(k.file);
+  db.checks = (db.checks || []).filter((x) => x.id !== k.id);
+  saveDb(); json(res, 200, { ok: true });
+}, { admin: true });
 
 /* general to-do — admin's own list, not attached to any job */
 route('GET', /^\/api\/todos$/, (req, res) => {
@@ -1110,6 +1523,17 @@ route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, b
 /* protected file downloads */
 route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
   const name = path.basename(decodeURIComponent(m[1]));
+  // check images are admin-only wherever they appear
+  if ((db.checks || []).some((k) => k.file === name)) {
+    if (user.role !== 'admin') return json(res, 403, { error: 'No access' });
+    const fp2 = path.join(UPLOAD_DIR, name);
+    if (fs.existsSync(fp2)) {
+      res.writeHead(200, { 'Content-Type': FILE_TYPES[path.extname(name).toLowerCase()] || 'application/octet-stream' });
+      return fs.createReadStream(fp2).pipe(res);
+    }
+    if (R2) { res.writeHead(302, { Location: r2PresignGet(name) }); return res.end(); }
+    return json(res, 404, { error: 'File not found' });
+  }
   // unfiled receipts belong to no job yet — staff can open them, nobody else
   const inInbox = (db.receipts || []).some((r) => r.file === name);
   if (inInbox && user.role === 'customer') return json(res, 403, { error: 'No access' });
@@ -1209,6 +1633,12 @@ server.listen(PORT, () => {
   console.log('  Running at:  http://localhost:' + PORT);
   console.log('  Storage: ' + (R2 ? 'Cloudflare R2 (bucket: ' + R2.bucket + ')' : 'local disk'));
   console.log('  Email: ' + (process.env.RESEND_API_KEY ? 'enabled, sending as ' + RESEND_FROM : 'DISABLED — RESEND_API_KEY not set'));
-  console.log('  Receipt scanning: ' + (process.env.ANTHROPIC_API_KEY ? 'enabled (' + SCAN_MODEL + ')' : 'DISABLED — ANTHROPIC_API_KEY not set'));
+  // show only the shape of the key — enough to spot a bad paste, never the secret itself
+  console.log('  Receipt scanning: ' + (SCAN_KEY
+    ? 'enabled (' + SCAN_MODEL + ') — key ' + SCAN_KEY.slice(0, 14) + '…' + SCAN_KEY.slice(-4) + ', ' + SCAN_KEY.length + ' chars'
+    : 'DISABLED — ANTHROPIC_API_KEY not set'));
+  console.log('  Contractor tax IDs: ' + (taxKeyOrNull()
+    ? 'encrypted at rest'
+    : 'CANNOT BE STORED — TAXID_KEY not set'));
   console.log('');
 });
