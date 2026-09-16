@@ -945,7 +945,7 @@ async function renderJob(id) {
         <div class="full"><label class="f">What For (e.g. deposit, framing complete)</label><input class="f" id="payNote" placeholder="Optional" /></div>
         <div class="full" style="text-align:right"><button class="btn gold" id="payAddBtn">+ Add Payment</button></div>
       </div>
-    </div>
+    </div>` : ''}
 
     <div class="panel">
       <h3>Invoices &amp; Job Costs</h3>
@@ -993,6 +993,7 @@ async function renderJob(id) {
       </div>` : ''}
     </div>
 
+    ${isAdmin ? `
     <div class="panel">
       <h3>Material List ${p.materialFileName ? '— from ' + esc(p.materialFileName) : ''}</h3>
       <div style="margin-bottom:14px">
