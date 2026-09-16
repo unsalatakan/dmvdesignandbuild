@@ -521,7 +521,7 @@ function projectOut(p, user) {
   const base = { ...p, customerName: customer ? customer.name : null, pmName: pm ? pm.name : null };
   // customers see the contract price and nothing else money-related:
   // no material costs, no internal notes, no receipts, no payment schedule
-  if (user.role === 'customer') { const { materials, notes, payments, dues, ...rest } = base; return rest; }
+  if (user.role === 'customer') { const { materials, notes, payments, dues, invoices, ...rest } = base; return rest; }
   return base;
 }
 function canAccess(p, user) {
@@ -666,7 +666,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     contractName: files.contract ? files.contract.originalname : null,
     planFile: files.plan ? files.plan.filename : null,
     planName: files.plan ? files.plan.originalname : null,
-    materialFileName: null, materials: [], notes: [], payments: [], dues: [], photos: [],
+    materialFileName: null, materials: [], notes: [], payments: [], dues: [], invoices: [], photos: [],
     created: new Date().toISOString(),
   };
   db.projects.push(p); saveDb();
@@ -734,6 +734,66 @@ route('PUT', /^\/api\/projects\/(\d+)\/materials\/(\d+)$/, (req, res, m, body, u
     mat.orderedAt = mat.ordered ? new Date().toISOString() : null;
   }
   saveDb(); json(res, 200, mat);
+}, { staff: true });
+
+/* invoices — money going OUT on a job: subs, suppliers, permits.
+ * Internal only; the PDF is optional so a cost can be logged before the paperwork lands. */
+const INVOICE_FILE_RE = /\.(pdf|png|jpe?g|webp|heic|heif)$/i;
+
+route('POST', /^\/api\/projects\/(\d+)\/invoices$/, async (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const { fields, files } = body;
+  const amount = Number(fields.amount);
+  if (!amount || amount <= 0) return json(res, 400, { error: 'A valid cost is required' });
+  const f = files.invoice;
+  if (f && !INVOICE_FILE_RE.test(f.originalname)) return json(res, 400, { error: 'Invoice must be a PDF or an image' });
+  if (f) await storeFile(f);
+  p.invoices = p.invoices || [];
+  const inv = {
+    id: nextId(),
+    desc: String(fields.desc || '').trim() || 'Invoice',
+    paidTo: String(fields.paidTo || '').trim(),
+    amount,
+    date: fields.date || new Date().toISOString().slice(0, 10),
+    file: f ? f.filename : null,
+    fileName: f ? f.originalname : null,
+    created: new Date().toISOString(),
+  };
+  p.invoices.push(inv); saveDb(); json(res, 200, inv);
+}, { staff: true, multipart: true });
+
+route('PUT', /^\/api\/projects\/(\d+)\/invoices\/(\d+)$/, async (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const inv = (p.invoices || []).find((x) => x.id === Number(m[2]));
+  if (!inv) return json(res, 404, { error: 'Invoice not found' });
+  const { fields, files } = body;
+  if (fields.desc !== undefined) inv.desc = String(fields.desc).trim() || 'Invoice';
+  if (fields.paidTo !== undefined) inv.paidTo = String(fields.paidTo).trim();
+  if (fields.date !== undefined) inv.date = fields.date || inv.date;
+  if (fields.amount !== undefined) {
+    const amount = Number(fields.amount);
+    if (!amount || amount <= 0) return json(res, 400, { error: 'A valid cost is required' });
+    inv.amount = amount;
+  }
+  const f = files.invoice;
+  if (f) {
+    if (!INVOICE_FILE_RE.test(f.originalname)) return json(res, 400, { error: 'Invoice must be a PDF or an image' });
+    await storeFile(f);
+    if (inv.file) await deleteFile(inv.file);   // replace, don't orphan the old one
+    inv.file = f.filename; inv.fileName = f.originalname;
+  }
+  saveDb(); json(res, 200, inv);
+}, { staff: true, multipart: true });
+
+route('DELETE', /^\/api\/projects\/(\d+)\/invoices\/(\d+)$/, async (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const inv = (p.invoices || []).find((x) => x.id === Number(m[2]));
+  if (inv && inv.file) await deleteFile(inv.file);
+  p.invoices = (p.invoices || []).filter((x) => x.id !== Number(m[2]));
+  saveDb(); json(res, 200, { ok: true });
 }, { staff: true });
 
 /* general to-do — admin's own list, not attached to any job */
@@ -908,8 +968,14 @@ route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, b
 /* protected file downloads */
 route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
   const name = path.basename(decodeURIComponent(m[1]));
-  const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name) || (p.photos || []).some((ph) => ph.file === name || ph.thumb === name));
+  const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name)
+    || (p.photos || []).some((ph) => ph.file === name || ph.thumb === name)
+    || (p.invoices || []).some((iv) => iv.file === name));
   if (!owner || !canAccess(owner, user)) return json(res, 403, { error: 'No access' });
+  // invoices are internal cost records — never served to the customer, even on their own job
+  if (user.role === 'customer' && (owner.invoices || []).some((iv) => iv.file === name)) {
+    return json(res, 403, { error: 'No access' });
+  }
   const fp = path.join(UPLOAD_DIR, name);
   if (fs.existsSync(fp)) {
     res.writeHead(200, { 'Content-Type': FILE_TYPES[path.extname(name).toLowerCase()] || 'application/octet-stream' });

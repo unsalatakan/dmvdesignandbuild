@@ -787,6 +787,11 @@ async function renderJob(id) {
   const owed = dueTotal(p);
   const next = nextDue(p);
   const overdueTotal = openDues(p).filter(isOverdue).reduce((s, d) => s + d.amount, 0);
+  // invoices — money going out on this job, newest first
+  const invoices = (p.invoices || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const invTotal = invoices.reduce((s, x) => s + (x.amount || 0), 0);
+  const profit = (p.price || 0) - invTotal;
+  const vendors = [...new Set(invoices.map((x) => x.paidTo).filter(Boolean))].sort();
 
   $('#main').innerHTML = `
     <div class="page-head">
@@ -904,6 +909,48 @@ async function renderJob(id) {
         <div><label class="f">Date Received</label><input class="f" id="payDate" type="date" value="${today}" /></div>
         <div class="full"><label class="f">What For (e.g. deposit, framing complete)</label><input class="f" id="payNote" placeholder="Optional" /></div>
         <div class="full" style="text-align:right"><button class="btn gold" id="payAddBtn">+ Add Payment</button></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3>Invoices &amp; Job Costs</h3>
+      <div class="info-grid" style="margin-bottom:16px">
+        <div><div class="k">Contract Price</div><div class="v">${money(p.price)}</div></div>
+        <div><div class="k">Total Invoiced</div><div class="v" style="color:var(--red)">${money(invTotal)}</div></div>
+        <div><div class="k">Profit So Far</div><div class="v" style="color:${profit >= 0 ? 'var(--green)' : 'var(--red)'}">${money(profit)}</div></div>
+      </div>
+      ${invoices.length ? `
+      <table class="inv-table">
+        <thead><tr><th>Date</th><th>Description</th><th>Paid To</th><th>Invoice</th><th class="right">Cost</th><th style="width:36px"></th></tr></thead>
+        <tbody>
+          ${invoices.map((x) => `
+          <tr>
+            <td>${fmtDate(x.date)}</td>
+            <td>${esc(x.desc)}</td>
+            <td>${x.paidTo ? esc(x.paidTo) : '<span class="muted">—</span>'}</td>
+            <td>${x.file
+              ? `<a class="mini-chip" href="/api/file/${x.file}" target="_blank" rel="noopener" title="${esc(x.fileName || '')}">📄 View</a>`
+              : '<span class="muted">—</span>'}</td>
+            <td class="right"><b>${money(x.amount)}</b></td>
+            <td class="right"><button class="del" data-delinv="${x.id}" title="Delete invoice">✕</button></td>
+          </tr>`).join('')}
+          <tr class="totals-row">
+            <td colspan="4">Total cost (${invoices.length} invoice${invoices.length === 1 ? '' : 's'})</td>
+            <td class="right" style="color:var(--red)">${money(invTotal)}</td><td></td>
+          </tr>
+        </tbody>
+      </table>` : '<div class="muted">No invoices yet. Add one below to start tracking what this job is costing you.</div>'}
+      <div class="form-grid" style="margin-top:16px">
+        <div class="full"><label class="f">Description *</label><input class="f" id="invDesc" placeholder="e.g. Electrical rough-in" /></div>
+        <div><label class="f">Cost ($) *</label><input class="f" id="invAmount" type="number" step="0.01" min="0" placeholder="0.00" /></div>
+        <div><label class="f">Paid To</label>
+          <input class="f" id="invPaidTo" list="invVendors" placeholder="Sub or supplier" />
+          <datalist id="invVendors">${vendors.map((v) => `<option value="${esc(v)}"></option>`).join('')}</datalist>
+        </div>
+        <div><label class="f">Date</label><input class="f" id="invDate" type="date" value="${today}" /></div>
+        <div><label class="f">Invoice PDF (optional)</label><input class="f" id="invFile" type="file" accept=".pdf,image/*" /></div>
+        <div class="full" style="text-align:right"><button class="btn gold" id="invAddBtn">+ Add Invoice</button></div>
+        <div class="error full" id="invErr"></div>
       </div>
     </div>
 
@@ -1048,6 +1095,37 @@ async function renderJob(id) {
     b.addEventListener('click', async () => {
       if (!confirm('Delete this payment?')) return;
       await api(`/api/projects/${id}/payments/${b.dataset.delpay}`, { method: 'DELETE' });
+      renderJob(id);
+    })
+  );
+
+  // invoices (money out)
+  $('#invAddBtn').addEventListener('click', async () => {
+    const desc = $('#invDesc').value.trim();
+    const amount = parseFloat($('#invAmount').value);
+    if (!desc) { $('#invErr').textContent = 'Enter a description.'; return; }
+    if (!amount || amount <= 0) { $('#invErr').textContent = 'Enter a valid cost.'; return; }
+    const btn = $('#invAddBtn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const fd = new FormData();
+      fd.append('desc', desc);
+      fd.append('amount', amount);
+      fd.append('paidTo', $('#invPaidTo').value.trim());
+      fd.append('date', $('#invDate').value || '');
+      const f = $('#invFile').files[0];
+      if (f) fd.append('invoice', f, f.name);
+      await api(`/api/projects/${id}/invoices`, { method: 'POST', body: fd });
+      renderJob(id);
+    } catch (err) {
+      $('#invErr').textContent = err.message;
+      btn.disabled = false; btn.textContent = '+ Add Invoice';
+    }
+  });
+  document.querySelectorAll('[data-delinv]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Delete this invoice? The attached file is removed too.')) return;
+      await api(`/api/projects/${id}/invoices/${b.dataset.delinv}`, { method: 'DELETE' });
       renderJob(id);
     })
   );

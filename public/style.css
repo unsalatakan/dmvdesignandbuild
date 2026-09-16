@@ -157,6 +157,11 @@ html:not(.light) .photo-queue { border-color: rgba(255,255,255,0.2); background:
 .photo-item.pending { cursor: default; outline: 2px solid var(--gold); outline-offset: -2px; }
 .photo-item.pending img { opacity: 0.92; }
 
+/* invoices / job costs */
+.inv-table td:nth-child(2) { font-weight: 600; }
+.inv-table .mini-chip { margin-right: 0; }
+@media (max-width: 800px) { .inv-table { min-width: 640px; } }
+
 /* general to-do — pinned above the per-job items */
 .todo-general { border-left: 3px solid var(--gold); padding-left: 12px; }
 .todo-general h4 { color: var(--gold); }
