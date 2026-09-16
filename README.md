@@ -67,6 +67,23 @@ Notes:
 - iPhone HEIC photos are converted in the browser before upload, and big photos are shrunk, so neither format nor size should ever block a scan.
 - Receipts are sent to Anthropic's API to be read. They are not used to train models.
 
+## Who sees what
+
+| | Admin | Project Manager | Delivery | Customer |
+|---|---|---|---|---|
+| Jobs | all | assigned only | all | own only |
+| Address, lockbox, plans | ✓ | ✓ | ✓ | ✓ |
+| Contract price | ✓ | ✓ | — | ✓ |
+| Job costs (invoices) | ✓ | ✓ | view only | — |
+| Payments & schedule | ✓ | ✓ | — | — |
+| Material orders | ✓ | ✓ | — | — |
+| Photos | ✓ | ✓ | view + add | view |
+| Receipts tab | ✓ | ✓ | ✓ | — |
+| Contractors & checks | ✓ | — | — | — |
+| Home page | full dashboard | full dashboard | map only | jobs summary |
+
+Add delivery logins on the **Managers** page, under Delivery Crew.
+
 ## Contractors and checks (admin only)
 
 The **Contractors** tab holds the subs and suppliers you write checks to — name, EIN or SSN, contact details.

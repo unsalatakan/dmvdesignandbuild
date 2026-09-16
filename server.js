@@ -556,10 +556,17 @@ function projectOut(p, user) {
   // customers see the contract price and nothing else money-related:
   // no material costs, no internal notes, no receipts, no payment schedule
   if (user.role === 'customer') { const { materials, notes, payments, dues, invoices, ...rest } = base; return rest; }
+  // delivery sees where the job is and what it has cost — not what it sells for,
+  // not what has been paid in, and not the material order list
+  if (user.role === 'delivery') {
+    const { materials, notes, payments, dues, price, ...rest } = base;
+    return rest;
+  }
   return base;
 }
 function canAccess(p, user) {
   if (user.role === 'admin') return true;
+  if (user.role === 'delivery') return true;          // needs every address to deliver to
   if (user.role === 'pm') return p.pmId === user.id;
   return p.customerId === user.id;
 }
@@ -665,6 +672,38 @@ route('PUT', /^\/api\/pms\/(\d+)$/, (req, res, m, body) => {
 route('DELETE', /^\/api\/pms\/(\d+)$/, (req, res, m) => {
   db.users = db.users.filter((u) => !(u.id === Number(m[1]) && u.role === 'pm'));
   db.projects.forEach((p) => { if (p.pmId === Number(m[1])) p.pmId = null; });
+  saveDb(); json(res, 200, { ok: true });
+}, { admin: true });
+
+/* delivery crew logins */
+route('GET', /^\/api\/delivery$/, (req, res) => {
+  json(res, 200, db.users.filter((u) => u.role === 'delivery').map(({ password, ...u }) => u));
+}, { admin: true });
+
+route('POST', /^\/api\/delivery$/, (req, res, m, body) => {
+  const { name, username, password } = body || {};
+  if (!name || !username || !password) return json(res, 400, { error: 'Name, username and password are required' });
+  if (db.users.some((u) => u.username.toLowerCase() === String(username).toLowerCase())) {
+    return json(res, 400, { error: 'That username is already taken' });
+  }
+  const c = { id: nextId(), username: String(username).trim(), password: hash(password), role: 'delivery', name: String(name).trim() };
+  db.users.push(c); saveDb();
+  const { password: _, ...out } = c;
+  json(res, 200, out);
+}, { admin: true });
+
+route('PUT', /^\/api\/delivery\/(\d+)$/, (req, res, m, body) => {
+  const c = db.users.find((u) => u.id === Number(m[1]) && u.role === 'delivery');
+  if (!c) return json(res, 404, { error: 'Delivery user not found' });
+  if (body.name) c.name = String(body.name).trim();
+  if (body.password) c.password = hash(body.password);
+  saveDb();
+  const { password: _, ...out } = c;
+  json(res, 200, out);
+}, { admin: true });
+
+route('DELETE', /^\/api\/delivery\/(\d+)$/, (req, res, m) => {
+  db.users = db.users.filter((u) => !(u.id === Number(m[1]) && u.role === 'delivery'));
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
 
@@ -933,7 +972,7 @@ route('DELETE', /^\/api\/projects\/(\d+)\/invoices\/(\d+)$/, async (req, res, m,
 route('GET', /^\/api\/receipts$/, (req, res) => {
   const list = (db.receipts || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
   json(res, 200, list);
-}, { staff: true });
+}, { crew: true });
 
 route('POST', /^\/api\/receipts$/, async (req, res, m, body, user) => {
   const f = body.files && body.files.receipt;
@@ -955,7 +994,7 @@ route('POST', /^\/api\/receipts$/, async (req, res, m, body, user) => {
     uploaded: new Date().toISOString(), by: user.name,
   };
   db.receipts.push(r); saveDb(); json(res, 200, r);
-}, { staff: true, multipart: true });
+}, { crew: true, multipart: true });
 
 /* Read a stored file back out, wherever it lives. */
 async function readStoredFile(name) {
@@ -986,7 +1025,7 @@ route('POST', /^\/api\/receipts\/(\d+)\/rescan$/, async (req, res, m) => {
     r.scanError = e.message; saveDb();
     json(res, e.code || 502, { error: e.message });
   }
-}, { staff: true });
+}, { crew: true });
 
 route('PUT', /^\/api\/receipts\/(\d+)$/, (req, res, m, body) => {
   const r = (db.receipts || []).find((x) => x.id === Number(m[1]));
@@ -999,7 +1038,7 @@ route('PUT', /^\/api\/receipts\/(\d+)$/, (req, res, m, body) => {
     r.amount = Number.isFinite(a) && a > 0 ? a : null;
   }
   saveDb(); json(res, 200, r);
-}, { staff: true });
+}, { crew: true });
 
 /* File a receipt to a job: it becomes that job's invoice and leaves the inbox. */
 route('POST', /^\/api\/receipts\/(\d+)\/assign$/, (req, res, m, body, user) => {
@@ -1021,14 +1060,14 @@ route('POST', /^\/api\/receipts\/(\d+)\/assign$/, (req, res, m, body, user) => {
   p.invoices.push(inv);
   db.receipts = db.receipts.filter((x) => x.id !== r.id);   // the file moves with it, so don't delete it
   saveDb(); json(res, 200, { ok: true, projectId: p.id, invoice: inv });
-}, { staff: true });
+}, { crew: true });
 
 route('DELETE', /^\/api\/receipts\/(\d+)$/, async (req, res, m) => {
   const r = (db.receipts || []).find((x) => x.id === Number(m[1]));
   if (r && r.file) await deleteFile(r.file);
   db.receipts = (db.receipts || []).filter((x) => x.id !== Number(m[1]));
   saveDb(); json(res, 200, { ok: true });
-}, { staff: true });
+}, { crew: true });
 
 /* ---- checks ----
  * A check written to a contractor, often covering several jobs at once. The photo is
@@ -1142,24 +1181,26 @@ route('POST', /^\/api\/contractors$/, (req, res, m, body) => {
   if ((db.contractors || []).some((c) => c.name.toLowerCase() === name.toLowerCase())) {
     return json(res, 400, { error: 'A contractor with that name already exists' });
   }
+  // Name is the only thing that can block a save. A tax ID that can't be stored is
+  // reported back as a warning rather than losing everything else they typed.
   const raw = digitsOnly(body.taxId);
-  if (raw && !taxKeyOrNull()) {
-    return json(res, 400, { error: 'Cannot store a tax ID: TAXID_KEY is not set on this server.' });
-  }
-  if (raw && raw.length !== 9) return json(res, 400, { error: 'EIN or SSN must be 9 digits' });
+  let warning = null;
+  let store = raw;
+  if (raw && !taxKeyOrNull()) { store = ''; warning = 'Contractor saved, but the tax ID was not stored: TAXID_KEY is not set on this server.'; }
+  else if (raw && raw.length !== 9) { store = ''; warning = 'Contractor saved, but the tax ID was not stored: an EIN or SSN must be 9 digits.'; }
   const c = {
     id: nextId(),
     name,
     taxIdType: body.taxIdType === 'ssn' ? 'ssn' : 'ein',
-    taxIdEnc: raw ? encryptTaxId(raw) : null,
-    taxIdLast4: raw ? raw.slice(-4) : null,
+    taxIdEnc: store ? encryptTaxId(store) : null,
+    taxIdLast4: store ? store.slice(-4) : null,
     phone: String(body.phone || '').trim(),
     email: String(body.email || '').trim(),
     notes: String(body.notes || '').trim(),
     created: new Date().toISOString(),
   };
   db.contractors = db.contractors || [];
-  db.contractors.push(c); saveDb(); json(res, 200, contractorOut(c));
+  db.contractors.push(c); saveDb(); json(res, 200, { ...contractorOut(c), warning });
 }, { admin: true });
 
 route('PUT', /^\/api\/contractors\/(\d+)$/, (req, res, m, body) => {
@@ -1177,16 +1218,15 @@ route('PUT', /^\/api\/contractors\/(\d+)$/, (req, res, m, body) => {
   if (body.phone !== undefined) c.phone = String(body.phone).trim();
   if (body.email !== undefined) c.email = String(body.email).trim();
   if (body.notes !== undefined) c.notes = String(body.notes).trim();
+  let warning = null;
   if (body.taxId !== undefined) {
     const raw = digitsOnly(body.taxId);
-    if (!raw) { c.taxIdEnc = null; c.taxIdLast4 = null; }
-    else {
-      if (!taxKeyOrNull()) return json(res, 400, { error: 'Cannot store a tax ID: TAXID_KEY is not set on this server.' });
-      if (raw.length !== 9) return json(res, 400, { error: 'EIN or SSN must be 9 digits' });
-      c.taxIdEnc = encryptTaxId(raw); c.taxIdLast4 = raw.slice(-4);
-    }
+    if (!raw) { c.taxIdEnc = null; c.taxIdLast4 = null; }          // cleared on purpose
+    else if (!taxKeyOrNull()) warning = 'Changes saved, but the tax ID was not stored: TAXID_KEY is not set on this server.';
+    else if (raw.length !== 9) warning = 'Changes saved, but the tax ID was not stored: an EIN or SSN must be 9 digits.';
+    else { c.taxIdEnc = encryptTaxId(raw); c.taxIdLast4 = raw.slice(-4); }
   }
-  saveDb(); json(res, 200, contractorOut(c));
+  saveDb(); json(res, 200, { ...contractorOut(c), warning });
 }, { admin: true });
 
 /* The only path by which a full tax ID leaves the server. */
@@ -1613,7 +1653,7 @@ route('POST', /^\/api\/projects\/(\d+)\/photos$/, async (req, res, m, body, user
   p.photos.push(ph); saveDb();
   notifyCustomer(p, 'photo', 'New photos were just added to your project "' + p.name + '".');
   json(res, 200, ph);
-}, { staff: true, multipart: true });
+}, { crew: true, multipart: true });
 
 route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, body, user) => {
   const { p, error } = findProject(m[1], user);
@@ -1622,7 +1662,7 @@ route('DELETE', /^\/api\/projects\/(\d+)\/photos\/(\d+)$/, async (req, res, m, b
   if (ph) { await deleteFile(ph.file); if (ph.thumb) await deleteFile(ph.thumb); }
   p.photos = (p.photos || []).filter((x) => x.id !== Number(m[2]));
   saveDb(); json(res, 200, { ok: true });
-}, { staff: true });
+}, { crew: true });
 
 /* protected file downloads */
 route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
@@ -1650,10 +1690,6 @@ route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
     if (user.role === 'customer' && (owner.invoices || []).some((iv) => iv.file === name)) {
       return json(res, 403, { error: 'No access' });
     }
-  }
-  // invoices are internal cost records — never served to the customer, even on their own job
-  if (user.role === 'customer' && (owner.invoices || []).some((iv) => iv.file === name)) {
-    return json(res, 403, { error: 'No access' });
   }
   const fp = path.join(UPLOAD_DIR, name);
   if (fs.existsSync(fp)) {
@@ -1712,8 +1748,11 @@ const server = http.createServer(async (req, res) => {
       const m = r.pattern.exec(urlPath);
       if (!m) continue;
       if (!r.public && !user) return json(res, 401, { error: 'Not logged in' });
+      // explicit allow-lists — a new role must be granted access deliberately,
+      // never inherit it by virtue of not being a customer
       if (r.admin && (!user || user.role !== 'admin')) return json(res, 403, { error: 'Admins only' });
-      if (r.staff && (!user || user.role === 'customer')) return json(res, 403, { error: 'Staff only' });
+      if (r.staff && (!user || !['admin', 'pm'].includes(user.role))) return json(res, 403, { error: 'Staff only' });
+      if (r.crew && (!user || !['admin', 'pm', 'delivery'].includes(user.role))) return json(res, 403, { error: 'Staff only' });
       let body = null;
       if (req.method === 'POST' || req.method === 'PUT') {
         const raw = await readBody(req);

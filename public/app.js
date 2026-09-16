@@ -15,6 +15,17 @@ const STATUS_TABLE = [
 const statusOf = (p) => (STATUS[p.status] ? p.status : 'active');
 const statusBadge = (p) => { const [label, color] = STATUS[statusOf(p)]; return `<span class="badge" style="background:${color};color:#fff">${label}</span>`; };
 
+/* Role shorthands, kept in one place so a permission question has one answer.
+ *   staff    = admin or project manager (the money and ordering side)
+ *   crew     = staff plus the delivery guy (site work: photos, receipts)
+ *   delivery = sees where jobs are and what they cost, never what they sell for */
+let IS_STAFF = false, IS_CREW = false, IS_DELIVERY = false;
+function setRoleFlags() {
+  IS_STAFF = ['admin', 'pm'].includes(ME.role);
+  IS_CREW = IS_STAFF || ME.role === 'delivery';
+  IS_DELIVERY = ME.role === 'delivery';
+}
+
 const $ = (s) => document.querySelector(s);
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -113,9 +124,12 @@ function showLogin() {
 function showApp() {
   $('#loginView').classList.add('hidden');
   $('#appView').classList.remove('hidden');
-  $('#whoami').textContent = ME.name + (ME.role === 'admin' ? ' (Admin)' : ME.role === 'pm' ? ' (Project Manager)' : '');
+  setRoleFlags();
+  const roleLabel = { admin: ' (Admin)', pm: ' (Project Manager)', delivery: ' (Delivery)' }[ME.role] || '';
+  $('#whoami').textContent = ME.name + roleLabel;
   const links = [['#/home', 'Home'], ['#/jobs', ME.role === 'customer' ? 'My Jobs' : 'Jobs']];
-  if (ME.role !== 'customer') links.push(['#/orders', 'Orders'], ['#/receipts', 'Receipts']);
+  if (IS_STAFF) links.push(['#/orders', 'Orders']);          // material ordering is admin/PM work
+  if (IS_CREW) links.push(['#/receipts', 'Receipts']);
   links.push(['#/photos', 'Photos']);
   if (ME.role === 'admin') links.push(['#/contractors', 'Contractors'], ['#/customers', 'Customers'], ['#/managers', 'Managers']);
   $('#navLinks').innerHTML = links.map(([h, t]) => `<a href="${h}" data-h="${h}">${t}</a>`).join('');
@@ -189,8 +203,8 @@ function route() {
   const jobMatch = h.match(/^#\/job\/(\d+)/);
   if (jobMatch) return renderJob(Number(jobMatch[1]));
   if (h.startsWith('#/jobs')) return renderJobs();
-  if (h.startsWith('#/orders') && ME.role !== 'customer') return renderOrders();
-  if (h.startsWith('#/receipts') && ME.role !== 'customer') return renderReceipts();
+  if (h.startsWith('#/orders') && IS_STAFF) return renderOrders();
+  if (h.startsWith('#/receipts') && IS_CREW) return renderReceipts();
   const checkMatch = h.match(/^#\/check\/(\d+)/);
   if (checkMatch && ME.role === 'admin') return renderCheck(Number(checkMatch[1]));
   const contractorMatch = h.match(/^#\/contractor\/(\d+)/);
@@ -267,7 +281,7 @@ function financeChartSVG(projects) {
 async function renderHome() {
   const projects = await api('/api/projects');
   const totalValue = projects.reduce((s, p) => s + (p.price || 0), 0);
-  const isAdmin = ME.role !== 'customer'; // admin or project manager
+  const isAdmin = IS_STAFF; // admin or project manager — not delivery
   const received = isAdmin ? projects.reduce((s, p) => s + (p.payments || []).reduce((a, x) => a + (x.amount || 0), 0), 0) : null;
   const toOrderCost = isAdmin ? projects.reduce((s, p) => s + (p.materials || []).filter((m) => !m.ordered).reduce((a, m) => a + (m.price || 0) * (m.qty || 1), 0), 0) : null;
   // every unpaid scheduled payment across all jobs, soonest first
@@ -281,6 +295,21 @@ async function renderHome() {
   const recentPhotos = projects
     .flatMap((p) => (p.photos || []).map((ph) => ({ ...ph, projectName: p.name, projectId: p.id })))
     .sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
+  // the delivery guy gets the map and nothing else — it is the only thing he needs
+  if (IS_DELIVERY) {
+    $('#main').innerHTML = `
+      <div class="page-head"><h1>Welcome, ${esc(ME.name)}</h1></div>
+      <div class="panel map-card" id="mapCard">
+        <h3>Job Map</h3>
+        <div class="map-hint">Click map to expand ⛶</div>
+        <div id="homemap"></div>
+      </div>`;
+    homeMap = drawMap('homemap', projects, false);
+    setTimeout(() => homeMap.invalidateSize(), 120);
+    $('#mapCard').addEventListener('click', () => openFullMap(projects));
+    return;
+  }
+
   $('#main').innerHTML = `
     ${isAdmin ? '' : `<div class="page-head"><h1>Welcome, ${esc(ME.name)}</h1></div>`}
     <div class="cards">
@@ -513,13 +542,13 @@ window.addEventListener('hashchange', () => { $('#mapFull').classList.add('hidde
 let jobsFilter = 'all', jobsQuery = '';
 async function renderJobs() {
   const projects = await api('/api/projects');
-  const isAdmin = ME.role !== 'customer'; // admin or project manager
+  const isAdmin = IS_STAFF; // admin or project manager — not delivery
   const card = (p) => `
       <div class="job-card" onclick="location.hash='#/job/${p.id}'">
         <h4>${esc(p.name)}</h4>
         <div class="addr">📍 ${addrLink(p)}</div>
         <div class="job-meta">
-          <span><b>${money(p.price)}</b></span>
+          ${IS_DELIVERY ? '' : `<span><b>${money(p.price)}</b></span>`}
           <span>Starts <b>${fmtDate(p.startDate)}</b></span>
           ${statusBadge(p)}
           ${isAdmin && dueTotal(p) ? `<span class="badge ${openDues(p).some(isOverdue) ? 'badge-red' : 'badge-amber'}">${money(dueTotal(p))} due</span>` : ''}
@@ -768,7 +797,7 @@ async function renderJob(id) {
   let p;
   try { p = await api('/api/projects/' + id); }
   catch { $('#main').innerHTML = '<div class="panel">Job not found.</div>'; return; }
-  const isAdmin = ME.role !== 'customer'; // admin or project manager
+  const isAdmin = IS_STAFF; // admin or project manager — not delivery
   const mats = p.materials || [];
   const toOrder = mats.filter((m) => !m.ordered);
   const totAll = mats.reduce((s, m) => s + m.price * (m.qty || 1), 0);
@@ -824,7 +853,7 @@ async function renderJob(id) {
       <div class="info-grid">
         <div><div class="k">Address</div><div class="v">${addrLink(p, 'addr-big')}</div></div>
         <div><div class="k">Lockbox Code</div><div class="v">${p.lockbox ? `<span class="lockbox-code" data-lb="${esc(p.lockbox)}" title="Tap to copy">🔒 ${esc(p.lockbox)}</span>` : '<span class="muted">—</span>'}</div></div>
-        <div><div class="k">Price</div><div class="v">${money(p.price)}</div></div>
+        ${IS_DELIVERY ? '' : `<div><div class="k">Price</div><div class="v">${money(p.price)}</div></div>`}
         <div><div class="k">Job Start Date</div><div class="v">${fmtDate(p.startDate)}</div></div>
         <div><div class="k">Customer</div><div class="v">${esc(p.customerName || '—')}</div></div>
       </div>
@@ -843,14 +872,14 @@ async function renderJob(id) {
 
     <div class="panel">
       <h3><a class="photo-job-link" href="#/job/${p.id}/photos">Photos${(p.photos || []).length ? ' (' + p.photos.length + ')' : ''} ›</a></h3>
-      ${isAdmin ? `
+      ${IS_CREW ? `
       <div style="margin-bottom:14px">${photoUploaderHtml()}</div>` : ''}
       ${(p.photos || []).length ? `
       <div class="photo-grid" id="jobPhotoGrid">
         ${p.photos.map((ph) => `
         <div class="photo-item" data-view="${p.photos.indexOf(ph)}">
           <img src="/api/file/${ph.thumb || ph.file}" alt="${esc(ph.name)}" loading="lazy" />
-          ${isAdmin ? `<button class="photo-del" data-delphoto="${ph.id}" title="Delete photo">✕</button>` : ''}
+          ${IS_CREW ? `<button class="photo-del" data-delphoto="${ph.id}" title="Delete photo">✕</button>` : ''}
         </div>`).join('')}
       </div>
       <a href="#/job/${p.id}/photos" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">View all ${p.photos.length} photos →</a>` : '<div class="muted">No photos yet.</div>'}
@@ -921,9 +950,9 @@ async function renderJob(id) {
     <div class="panel">
       <h3>Invoices &amp; Job Costs</h3>
       <div class="info-grid" style="margin-bottom:16px">
-        <div><div class="k">Contract Price</div><div class="v">${money(p.price)}</div></div>
+        ${IS_DELIVERY ? '' : `<div><div class="k">Contract Price</div><div class="v">${money(p.price)}</div></div>`}
         <div><div class="k">Total Invoiced</div><div class="v" style="color:var(--red)">${money(invTotal)}</div></div>
-        <div><div class="k">Profit So Far</div><div class="v" style="color:${profit >= 0 ? 'var(--green)' : 'var(--red)'}">${money(profit)}</div></div>
+        ${IS_DELIVERY ? '' : `<div><div class="k">Profit So Far</div><div class="v" style="color:${profit >= 0 ? 'var(--green)' : 'var(--red)'}">${money(profit)}</div></div>`}
       </div>
       ${invoices.length ? `
       <table class="inv-table">
@@ -938,14 +967,15 @@ async function renderJob(id) {
               ? `<a class="mini-chip" href="/api/file/${x.file}" target="_blank" rel="noopener" title="${esc(x.fileName || '')}">📄 View</a>`
               : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(x.amount)}</b></td>
-            <td class="right"><button class="del" data-delinv="${x.id}" title="Delete invoice">✕</button></td>
+            <td class="right">${isAdmin ? `<button class="del" data-delinv="${x.id}" title="Delete invoice">✕</button>` : ''}</td>
           </tr>`).join('')}
           <tr class="totals-row">
             <td colspan="4">Total cost (${invoices.length} invoice${invoices.length === 1 ? '' : 's'})</td>
             <td class="right" style="color:var(--red)">${money(invTotal)}</td><td></td>
           </tr>
         </tbody>
-      </table>` : '<div class="muted">No invoices yet. Add one below to start tracking what this job is costing you.</div>'}
+      </table>` : `<div class="muted">No costs recorded on this job yet.${isAdmin ? ' Add one below to start tracking what it is costing you.' : ''}</div>`}
+      ${isAdmin ? `
       <div class="form-grid" style="margin-top:16px">
         <div class="full"><label class="f">Description *</label><input class="f" id="invDesc" placeholder="e.g. Electrical rough-in" /></div>
         <div><label class="f">Cost ($) *</label><input class="f" id="invAmount" type="number" step="0.01" min="0" placeholder="0.00" /></div>
@@ -960,7 +990,7 @@ async function renderJob(id) {
         </div>
         <div class="full" style="text-align:right"><button class="btn gold" id="invAddBtn">+ Add Invoice</button></div>
         <div class="error full" id="invErr"></div>
-      </div>
+      </div>` : ''}
     </div>
 
     <div class="panel">
@@ -1043,18 +1073,20 @@ async function renderJob(id) {
     window.addEventListener('resize', capRows);
   }
 
+  // photos are crew work — the delivery guy adds and removes them too
+  if (IS_CREW) {
+    wirePhotoUploader(id, () => renderJob(id));
+    document.querySelectorAll('[data-delphoto]').forEach((b) =>
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Delete this photo?')) return;
+        await api(`/api/projects/${id}/photos/${b.dataset.delphoto}`, { method: 'DELETE' });
+        renderJob(id);
+      })
+    );
+  }
+
   if (!isAdmin) return;
-
-  wirePhotoUploader(id, () => renderJob(id));
-
-  document.querySelectorAll('[data-delphoto]').forEach((b) =>
-    b.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (!confirm('Delete this photo?')) return;
-      await api(`/api/projects/${id}/photos/${b.dataset.delphoto}`, { method: 'DELETE' });
-      renderJob(id);
-    })
-  );
 
   $('#editProjBtn').addEventListener('click', () => projectModal(p));
   if ($('#delProjBtn')) $('#delProjBtn').addEventListener('click', async () => {
@@ -1512,13 +1544,14 @@ function contractorFormHtml(c) {
   const e = c || {};
   return `
     <div class="full"><label class="f">Full Name *</label><input class="f" name="name" required value="${esc(e.name || '')}" placeholder="Business or person the check is written to" /></div>
+    <div class="full muted" style="margin-top:-4px">Everything below is optional — you can fill it in later.</div>
     <div><label class="f">ID Type</label>
       <select class="f" name="taxIdType">
         <option value="ein" ${e.taxIdType !== 'ssn' ? 'selected' : ''}>EIN</option>
         <option value="ssn" ${e.taxIdType === 'ssn' ? 'selected' : ''}>SSN</option>
       </select>
     </div>
-    <div><label class="f">EIN / SSN ${e.taxIdLast4 ? '(on file — leave blank to keep)' : ''}</label>
+    <div><label class="f">EIN / SSN ${e.taxIdLast4 ? '(on file — leave blank to keep)' : '(optional)'}</label>
       <input class="f" name="taxId" inputmode="numeric" autocomplete="off" placeholder="9 digits" /></div>
     <div><label class="f">Phone</label><input class="f" name="phone" value="${esc(e.phone || '')}" /></div>
     <div><label class="f">Email</label><input class="f" name="email" type="email" value="${esc(e.email || '')}" /></div>
@@ -1544,7 +1577,9 @@ function contractorModal(c, onSaved) {
       const saved = c
         ? await api('/api/contractors/' + c.id, { method: 'PUT', json: f })
         : await api('/api/contractors', { method: 'POST', json: f });
-      closeModal(); onSaved(saved);
+      closeModal();
+      if (saved.warning) alert(saved.warning);   // saved either way — just say what didn't stick
+      onSaved(saved);
     } catch (err) { $('#conErr').textContent = err.message; }
   });
 }
@@ -1822,7 +1857,7 @@ async function renderJobPhotos(id) {
   let p;
   try { p = await api('/api/projects/' + id); }
   catch { $('#main').innerHTML = '<div class="panel">Job not found.</div>'; return; }
-  const isStaff = ME.role !== 'customer';
+  const isStaff = IS_CREW;   // delivery adds photos too
   const photos = (p.photos || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
   /* group by upload date (newest first) */
   const groups = [];
@@ -1874,7 +1909,7 @@ async function renderJobPhotos(id) {
 
 /* ---------- PROJECT MANAGERS (admin) ---------- */
 async function renderManagers() {
-  const pms = await api('/api/pms');
+  const [pms, crew] = await Promise.all([api('/api/pms'), api('/api/delivery')]);
   $('#main').innerHTML = `
     <div class="page-head">
       <h1>Project Managers</h1>
@@ -1897,7 +1932,69 @@ async function renderManagers() {
             </td>
           </tr>`).join('')}</tbody>
       </table>` : '<div class="muted">No project managers yet. Add one and assign them to jobs — they will only see the jobs assigned to them.</div>'}
+    </div>
+
+    <div class="page-head" style="margin-top:28px">
+      <h1>Delivery Crew</h1>
+      <button class="btn gold" id="newDelBtn">+ Add Delivery</button>
+    </div>
+    <div class="panel">
+      ${crew.length ? `
+      <table>
+        <thead><tr><th>Name</th><th>Username</th><th class="right">Actions</th></tr></thead>
+        <tbody>${crew.map((c) => `
+          <tr>
+            <td><b>${esc(c.name)}</b></td>
+            <td>${esc(c.username)}</td>
+            <td class="right">
+              <button class="btn small" data-delpw="${c.id}">Reset Password</button>
+              <button class="btn small danger" data-deldel="${c.id}">Delete</button>
+            </td>
+          </tr>`).join('')}</tbody>
+      </table>` : '<div class="muted">No delivery logins yet.</div>'}
+      <div class="muted" style="margin-top:14px">
+        Delivery logins see the job map, every job's address and lockbox, what each job has cost, and the photos —
+        and can add photos and receipts. They cannot see contract prices, payments, material orders or contractors.
+      </div>
     </div>`;
+
+  $('#newDelBtn').addEventListener('click', () => {
+    openModal(`
+      <h2>Add Delivery Login</h2>
+      <form id="delForm" class="form-grid">
+        <div class="full"><label class="f">Full Name *</label><input class="f" name="name" required /></div>
+        <div><label class="f">Login Username *</label><input class="f" name="username" required /></div>
+        <div><label class="f">Login Password *</label><input class="f" name="password" required /></div>
+        <div class="modal-actions full">
+          <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn gold">Add Delivery</button>
+        </div>
+        <div class="error full" id="delErr"></div>
+      </form>`);
+    $('#delForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('/api/delivery', { method: 'POST', json: Object.fromEntries(new FormData(e.target)) });
+        closeModal(); renderManagers();
+      } catch (err) { $('#delErr').textContent = err.message; }
+    });
+  });
+  document.querySelectorAll('[data-delpw]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const pw = prompt('New password for this delivery login:');
+      if (!pw) return;
+      await api('/api/delivery/' + b.dataset.delpw, { method: 'PUT', json: { password: pw } });
+      alert('Password updated.');
+    })
+  );
+  document.querySelectorAll('[data-deldel]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('Delete this delivery login?')) return;
+      await api('/api/delivery/' + b.dataset.deldel, { method: 'DELETE' });
+      renderManagers();
+    })
+  );
+
   $('#newPmBtn').addEventListener('click', () => {
     openModal(`
       <h2>Add Project Manager</h2>
