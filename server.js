@@ -1034,10 +1034,18 @@ route('DELETE', /^\/api\/receipts\/(\d+)$/, async (req, res, m) => {
  * A check written to a contractor, often covering several jobs at once. The photo is
  * read for the check number, who it was made out to, and the handwritten line items;
  * each line then gets pointed at a job, which files it as that job's cost. */
+/* Every check is drawn on the company's own account, so the pre-printed company name
+ * is always the payer. Saying so stops the scanner grabbing it as the payee — it is
+ * the largest, clearest name on the page and otherwise an easy thing to mistake. */
+const COMPANY_NAME = process.env.COMPANY_NAME || 'DMV Design and Build';
 const CHECK_PROMPT = 'This is a photograph of a business check or its carbon-copy stub. '
+  + 'The check is always written FROM "' + COMPANY_NAME + '" (also appearing as "'
+  + COMPANY_NAME + ' LLC"), whose name is pre-printed on the check. That pre-printed name '
+  + 'is the payer and is NEVER the payee — ignore it when looking for who was paid. '
+  + 'The payee is the OTHER name: handwritten after "Pay to the order of", or handwritten at the top of a stub. '
   + 'Reply with ONLY a JSON object, no prose and no code fence, using exactly these keys: '
   + '"number" (the check number, usually printed in the top-right corner, digits only), '
-  + '"payee" (who the check was written to — the name after "Pay to the order of", or the name written at the top of a stub), '
+  + '"payee" (who the check was written to — never the pre-printed company name above), '
   + '"date" (the date on the check as YYYY-MM-DD), '
   + '"total" (the total amount of the check as a plain number, or null if not clearly written), '
   + '"lines" (an array of the individual items written on it, each {"desc": short label as written, "amount": number}). '
@@ -1087,9 +1095,13 @@ async function scanCheck(f) {
   let g;
   try { g = JSON.parse(match[0]); } catch { throw unreadable(); }
   const num = (v) => { const n = Number(String(v ?? '').replace(/[^0-9.-]/g, '')); return Number.isFinite(n) && n > 0 ? n : null; };
+  // backstop: if it came back with our own company as the payee, it read the payer
+  const bare = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '').replace(/(llc|inc|corp)$/, '');
+  let payee = g.payee ? String(g.payee).trim().slice(0, 80) : null;
+  if (payee && bare(payee) === bare(COMPANY_NAME)) payee = null;
   return {
     number: g.number ? digitsOnly(g.number).slice(0, 12) : null,
-    payee: g.payee ? String(g.payee).trim().slice(0, 80) : null,
+    payee,
     date: /^\d{4}-\d{2}-\d{2}$/.test(String(g.date || '')) ? g.date : null,
     total: num(g.total),
     lines: Array.isArray(g.lines)
@@ -1200,7 +1212,40 @@ route('DELETE', /^\/api\/contractors\/(\d+)$/, (req, res, m) => {
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
 
-/* Checks: upload → scan → confirm payee → point each line at a job. */
+/* Checks: upload → scan → confirm payee → point each line at a job.
+ * A line is just a job and an amount. The text written beside it on the check is
+ * kept only as a hint for picking the job, and to auto-match where it is obvious. */
+
+/* Match a handwritten line like "Rockville Nosh Permit" to a job called "Rockville
+ * Nosh". Only returns a job when exactly one matches, so an ambiguous scrawl is
+ * left for a human rather than guessed at. */
+function matchProjectForLine(text) {
+  const words = String(text || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  if (!words.length) return null;
+  const hits = db.projects.filter((p) => {
+    const pw = String(p.name).toLowerCase().match(/[a-z0-9]+/g) || [];
+    const meaningful = pw.filter((w) => w.length > 2 && !['job', 'the', 'and', 'st', 'ave', 'rd'].includes(w));
+    if (!meaningful.length) return false;
+    return meaningful.every((w) => words.includes(w));      // every distinctive word appears
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/* Build the job-cost entry a check line creates. Description is just the check
+ * reference — the job and amount carry the meaning. */
+function invoiceForLine(k, line, contractorName) {
+  return {
+    id: nextId(),
+    desc: k.number ? 'Check #' + k.number : 'Check payment',
+    paidTo: contractorName || k.payee || '',
+    amount: line.amount,
+    date: k.date,
+    file: k.file, fileName: k.fileName,
+    checkId: k.id, checkNumber: k.number,
+    created: new Date().toISOString(),
+  };
+}
+
 function checkOut(k) {
   const c = (db.contractors || []).find((x) => x.id === k.contractorId);
   return {
@@ -1221,29 +1266,52 @@ route('GET', /^\/api\/checks\/(\d+)$/, (req, res, m) => {
   json(res, 200, checkOut(k));
 }, { admin: true });
 
+/* A check can arrive two ways: photographed and scanned, or typed in by hand when
+ * there's no photo to take. The photo is optional and can be attached later. */
 route('POST', /^\/api\/checks$/, async (req, res, m, body, user) => {
-  const f = body.files && body.files.check;
-  if (!f) return json(res, 400, { error: 'No file uploaded' });
-  if (!INVOICE_FILE_RE.test(f.originalname)) return json(res, 400, { error: 'Check must be a PDF or an image' });
-  await storeFile(f);
+  const { fields, files } = body;
+  const f = files && files.check;
   let g = { number: null, payee: null, date: null, total: null, lines: [] };
   let scanError = null;
-  try { g = await scanCheck(f); }
-  catch (e) { scanError = e.message; }          // a failed scan still keeps the photo
+  if (f) {
+    if (!INVOICE_FILE_RE.test(f.originalname)) return json(res, 400, { error: 'Check must be a PDF or an image' });
+    await storeFile(f);
+    try { g = await scanCheck(f); }
+    catch (e) { scanError = e.message; }        // a failed scan still keeps the photo
+  }
+  // anything typed in by hand beats what the scanner made of it
+  const typedContractor = fields.contractorId ? Number(fields.contractorId) : null;
+  if (typedContractor && !(db.contractors || []).some((c) => c.id === typedContractor)) {
+    return json(res, 404, { error: 'Contractor not found' });
+  }
+  const payee = String(fields.payee || '').trim() || g.payee || '';
   // match the payee against contractors already on file (case/spacing tolerant)
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const hit = g.payee ? (db.contractors || []).find((c) => norm(c.name) === norm(g.payee)) : null;
+  const hit = typedContractor
+    ? db.contractors.find((c) => c.id === typedContractor)
+    : (payee ? (db.contractors || []).find((c) => norm(c.name) === norm(payee)) : null);
   const k = {
     id: nextId(),
-    number: g.number || '',
-    payee: g.payee || '',
+    number: String(fields.number || '').trim() || g.number || '',
+    payee,
     contractorId: hit ? hit.id : null,
-    date: g.date || new Date().toISOString().slice(0, 10),
-    file: f.filename, fileName: f.originalname,
-    lines: (g.lines || []).map((l) => ({ id: nextId(), desc: l.desc, amount: l.amount, projectId: null, invoiceId: null })),
-    scanned: !scanError, scanError,
+    date: fields.date || g.date || new Date().toISOString().slice(0, 10),
+    file: f ? f.filename : null, fileName: f ? f.originalname : null,
+    lines: (g.lines || []).map((l) => ({ id: nextId(), readAs: l.desc, amount: l.amount, projectId: null, invoiceId: null, auto: false })),
+    scanned: f ? !scanError : true,     // nothing to scan on a hand-logged check
+    scanError,
     uploaded: new Date().toISOString(), by: user.name,
   };
+  // file any line whose written text points unambiguously at one job
+  for (const line of k.lines) {
+    if (!line.amount) continue;
+    const p = matchProjectForLine(line.readAs);
+    if (!p) continue;
+    const inv = invoiceForLine(k, line, hit ? hit.name : null);
+    p.invoices = p.invoices || [];
+    p.invoices.push(inv);
+    line.projectId = p.id; line.invoiceId = inv.id; line.auto = true;
+  }
   db.checks = db.checks || [];
   db.checks.push(k); saveDb();
   json(res, 200, { ...checkOut(k), payeeMatched: !!hit });
@@ -1260,6 +1328,20 @@ route('PUT', /^\/api\/checks\/(\d+)$/, (req, res, m, body) => {
     if (id && !(db.contractors || []).some((c) => c.id === id)) return json(res, 404, { error: 'Contractor not found' });
     k.contractorId = id;
   }
+  // carry the header changes down to every job cost this check created
+  const c = (db.contractors || []).find((x) => x.id === k.contractorId);
+  const ids = (k.lines || []).map((l) => l.invoiceId).filter(Boolean);
+  if (ids.length) {
+    for (const p of db.projects) {
+      for (const inv of p.invoices || []) {
+        if (!ids.includes(inv.id)) continue;
+        inv.desc = k.number ? 'Check #' + k.number : 'Check payment';
+        inv.checkNumber = k.number;
+        inv.date = k.date;
+        inv.paidTo = c ? c.name : (k.payee || '');
+      }
+    }
+  }
   saveDb(); json(res, 200, checkOut(k));
 }, { admin: true });
 
@@ -1269,24 +1351,55 @@ function syncLineInvoice(line) {
   if (!line.invoiceId) return;
   for (const p of db.projects) {
     const inv = (p.invoices || []).find((x) => x.id === line.invoiceId);
-    if (inv) { inv.desc = line.desc || 'Check payment'; inv.amount = line.amount; return; }
+    if (inv) { inv.amount = line.amount; return; }
   }
 }
 
+/* Add a job cost to a check. Job and amount can come in together, which is how a
+ * hand-logged check gets built up — one line per job. */
 route('POST', /^\/api\/checks\/(\d+)\/lines$/, (req, res, m, body) => {
   const k = (db.checks || []).find((x) => x.id === Number(m[1]));
   if (!k) return json(res, 404, { error: 'Check not found' });
+  const amount = Number(body.amount);
+  if (!amount || amount <= 0) return json(res, 400, { error: 'A valid amount is required' });
+  const line = { id: nextId(), readAs: '', amount, projectId: null, invoiceId: null, auto: false };
+  if (body.projectId) {
+    const p = db.projects.find((x) => x.id === Number(body.projectId));
+    if (!p) return json(res, 404, { error: 'Project not found' });
+    const c = (db.contractors || []).find((x) => x.id === k.contractorId);
+    const inv = invoiceForLine(k, line, c ? c.name : null);
+    p.invoices = p.invoices || [];
+    p.invoices.push(inv);
+    line.projectId = p.id; line.invoiceId = inv.id;
+  }
   k.lines = k.lines || [];
-  k.lines.push({ id: nextId(), desc: String(body.desc || '').trim(), amount: Number(body.amount) || null, projectId: null, invoiceId: null });
+  k.lines.push(line);
   saveDb(); json(res, 200, checkOut(k));
 }, { admin: true });
+
+/* Attach (or replace) the photo on a check that was logged by hand. */
+route('POST', /^\/api\/checks\/(\d+)\/photo$/, async (req, res, m, body) => {
+  const k = (db.checks || []).find((x) => x.id === Number(m[1]));
+  if (!k) return json(res, 404, { error: 'Check not found' });
+  const f = body.files && body.files.check;
+  if (!f) return json(res, 400, { error: 'No file uploaded' });
+  if (!INVOICE_FILE_RE.test(f.originalname)) return json(res, 400, { error: 'Check must be a PDF or an image' });
+  await storeFile(f);
+  if (k.file) await deleteFile(k.file);
+  k.file = f.filename; k.fileName = f.originalname;
+  // keep the job costs pointing at the newly attached image
+  const ids = (k.lines || []).map((l) => l.invoiceId).filter(Boolean);
+  if (ids.length) for (const p of db.projects) {
+    for (const inv of p.invoices || []) if (ids.includes(inv.id)) { inv.file = k.file; inv.fileName = k.fileName; }
+  }
+  saveDb(); json(res, 200, checkOut(k));
+}, { admin: true, multipart: true });
 
 route('PUT', /^\/api\/checks\/(\d+)\/lines\/(\d+)$/, (req, res, m, body) => {
   const k = (db.checks || []).find((x) => x.id === Number(m[1]));
   if (!k) return json(res, 404, { error: 'Check not found' });
   const line = (k.lines || []).find((l) => l.id === Number(m[2]));
   if (!line) return json(res, 404, { error: 'Line not found' });
-  if (body.desc !== undefined) line.desc = String(body.desc).trim();
   if (body.amount !== undefined) {
     const a = Number(body.amount);
     line.amount = Number.isFinite(a) && a > 0 ? a : null;
@@ -1309,19 +1422,10 @@ route('PUT', /^\/api\/checks\/(\d+)\/lines\/(\d+)$/, (req, res, m, body) => {
         if (!p) return json(res, 404, { error: 'Project not found' });
         if (!line.amount) return json(res, 400, { error: 'Enter the amount before assigning this line to a job' });
         const c = (db.contractors || []).find((x) => x.id === k.contractorId);
-        const inv = {
-          id: nextId(),
-          desc: line.desc || 'Check payment',
-          paidTo: c ? c.name : (k.payee || ''),
-          amount: line.amount,
-          date: k.date,
-          file: k.file, fileName: k.fileName,
-          checkId: k.id, checkNumber: k.number,
-          created: new Date().toISOString(),
-        };
+        const inv = invoiceForLine(k, line, c ? c.name : null);
         p.invoices = p.invoices || [];
         p.invoices.push(inv);
-        line.projectId = p.id; line.invoiceId = inv.id;
+        line.projectId = p.id; line.invoiceId = inv.id; line.auto = false;   // a human chose this one
       }
     }
   }

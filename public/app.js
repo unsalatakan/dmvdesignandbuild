@@ -1387,36 +1387,48 @@ async function renderCheck(id) {
       <h3>Breakdown</h3>
       ${lines.length ? `
       <table class="check-lines">
-        <thead><tr><th>What For</th><th class="right">Amount</th><th>Job</th><th style="width:36px"></th></tr></thead>
+        <thead><tr><th>Job</th><th class="right">Amount</th><th style="width:36px"></th></tr></thead>
         <tbody>
           ${lines.map((l) => `
           <tr data-line="${l.id}">
-            <td><input class="f" data-lf="desc" value="${esc(l.desc)}" /></td>
-            <td class="right"><input class="f right" data-lf="amount" type="number" step="0.01" min="0" value="${l.amount ?? ''}" /></td>
             <td>
               <select class="f" data-lf="projectId">
                 <option value="">— Not assigned —</option>
                 ${jobs.map((p) => `<option value="${p.id}" ${l.projectId === p.id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
               </select>
+              ${l.readAs ? `<div class="line-readas">${l.auto ? '✓ auto-matched from' : 'written on check as'} “${esc(l.readAs)}”</div>` : ''}
             </td>
+            <td class="right"><input class="f right" data-lf="amount" type="number" step="0.01" min="0" value="${l.amount ?? ''}" /></td>
             <td class="right"><button class="del" data-delline="${l.id}" title="Remove line">✕</button></td>
           </tr>`).join('')}
           <tr class="totals-row">
-            <td>Total</td><td class="right" style="color:var(--red)">${money(k.total)}</td><td colspan="2"></td>
+            <td>Total</td><td class="right" style="color:var(--red)">${money(k.total)}</td><td></td>
           </tr>
         </tbody>
       </table>` : '<div class="muted">No lines on this check yet. Add one below.</div>'}
       <div class="form-grid" style="margin-top:16px">
-        <div><label class="f">What For</label><input class="f" id="ckLineDesc" placeholder="e.g. Rockville permit" /></div>
+        <div><label class="f">Job</label>
+          <select class="f" id="ckLineJob">
+            <option value="">— Choose a job —</option>
+            ${jobs.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+          </select>
+        </div>
         <div><label class="f">Amount ($)</label><input class="f" id="ckLineAmt" type="number" step="0.01" min="0" placeholder="0.00" /></div>
-        <div style="display:flex;align-items:flex-end"><button class="btn gold" id="ckAddLine">+ Add Line</button></div>
+        <div style="display:flex;align-items:flex-end"><button class="btn gold" id="ckAddLine">+ Add Job Cost</button></div>
+        <div class="error full" id="ckLineErr"></div>
       </div>
-      <div class="muted" style="margin-top:10px">Picking a job files that amount as a cost on the job, so its profit stays right.</div>
+      <div class="muted" style="margin-top:10px">Add one line per job. Each files that amount as a cost on the job, so its profit stays right.</div>
     </div>
 
     <div class="panel">
       <h3>Check Image</h3>
-      <a href="/api/file/${k.file}" target="_blank" rel="noopener"><img class="check-img" src="/api/file/${k.file}" alt="Check ${esc(k.number)}" /></a>
+      <input type="file" id="ckPhotoFile" accept=".pdf,image/*" style="display:none" />
+      ${k.file
+        ? `<a href="/api/file/${k.file}" target="_blank" rel="noopener"><img class="check-img" src="/api/file/${k.file}" alt="Check ${esc(k.number)}" /></a>
+           <div style="margin-top:12px"><button class="btn" id="ckPhotoBtn">Replace Image</button></div>`
+        : `<div class="muted" style="margin-bottom:12px">No image on this check — it was entered by hand.</div>
+           <button class="btn gold" id="ckPhotoBtn">📷 Attach Photo</button>`}
+      <div class="scan-status" id="ckPhotoStatus"></div>
     </div>`;
 
   const note = $('#ckNote');
@@ -1436,27 +1448,44 @@ async function renderCheck(id) {
     });
   });
   $('#ckAddLine').addEventListener('click', async () => {
-    const desc = $('#ckLineDesc').value.trim();
     const amount = parseFloat($('#ckLineAmt').value);
-    if (!desc && !amount) return;
-    await api(`/api/checks/${id}/lines`, { method: 'POST', json: { desc, amount } });
-    renderCheck(id);
+    if (!amount) { $('#ckLineErr').textContent = 'Enter an amount.'; return; }
+    try {
+      await api(`/api/checks/${id}/lines`, {
+        method: 'POST',
+        json: { amount, projectId: $('#ckLineJob').value || null },
+      });
+      renderCheck(id);
+    } catch (err) { $('#ckLineErr').textContent = err.message; }
+  });
+  $('#ckPhotoBtn').addEventListener('click', () => $('#ckPhotoFile').click());
+  $('#ckPhotoFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    $('#ckPhotoStatus').textContent = 'Uploading…';
+    try {
+      const up = await prepReceipt(f);
+      const fd = new FormData();
+      fd.append('check', up, up.name);
+      await api(`/api/checks/${id}/photo`, { method: 'POST', body: fd });
+      renderCheck(id);
+    } catch (err) { $('#ckPhotoStatus').textContent = err.message; }
   });
   document.querySelectorAll('tr[data-line]').forEach((row) => {
     const lid = row.dataset.line;
     const val = (f) => row.querySelector(`[data-lf="${f}"]`).value;
-    const save = async (reload) => {
+    const save = async () => {
       try {
         await api(`/api/checks/${id}/lines/${lid}`, {
           method: 'PUT',
-          json: { desc: val('desc'), amount: val('amount'), projectId: val('projectId') || null },
+          json: { amount: val('amount'), projectId: val('projectId') || null },
         });
-        if (reload) renderCheck(id);
+        renderCheck(id);
       } catch (err) { alert(err.message); renderCheck(id); }
     };
-    row.querySelector('[data-lf="desc"]').addEventListener('blur', () => save(false));
-    row.querySelector('[data-lf="amount"]').addEventListener('blur', () => save(true));
-    row.querySelector('[data-lf="projectId"]').addEventListener('change', () => save(true));
+    row.querySelector('[data-lf="amount"]').addEventListener('blur', save);
+    row.querySelector('[data-lf="projectId"]').addEventListener('change', save);
   });
   document.querySelectorAll('[data-delline]').forEach((b) =>
     b.addEventListener('click', async () => {
@@ -1532,14 +1561,15 @@ async function renderContractors() {
     </div>
 
     <div class="panel">
-      <h3>Upload a Check</h3>
+      <h3>Log a Check</h3>
       <input type="file" id="ckFile" accept=".pdf,image/*" style="display:none" />
       <div class="photo-add-btns">
-        <button class="btn gold" id="ckUpBtn">📷 Snap / Choose Check</button>
+        <button class="btn gold" id="ckUpBtn">📷 Scan a Check</button>
+        <button class="btn" id="ckManBtn">✍️ Enter by Hand</button>
       </div>
       <div class="scan-status" id="ckUpStatus"></div>
       <div class="muted" style="margin-top:8px">
-        The check number, who it was written to, and the handwritten lines are read for you. You then point each line at a job.
+        Scanning reads the check number, who it was written to and the handwritten lines. No photo? Enter it by hand and add a line per job — you can attach the photo later.
       </div>
     </div>
 
@@ -1579,6 +1609,35 @@ async function renderContractors() {
     </div>`;
 
   $('#ckUpBtn').addEventListener('click', () => $('#ckFile').click());
+  $('#ckManBtn').addEventListener('click', () => {
+    openModal(`
+      <h2>Log a Check</h2>
+      <form id="ckManForm" class="form-grid">
+        <div><label class="f">Check Number</label><input class="f" name="number" inputmode="numeric" placeholder="1009" /></div>
+        <div><label class="f">Date</label><input class="f" name="date" type="date" value="${todayISO()}" /></div>
+        <div class="full"><label class="f">Paid To</label>
+          <select class="f" name="contractorId">
+            <option value="">— Choose a contractor —</option>
+            ${list.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="full muted">You'll add a line per job on the next screen.</div>
+        <div class="modal-actions full">
+          <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn gold">Create Check</button>
+        </div>
+        <div class="error full" id="ckManErr"></div>
+      </form>`);
+    $('#ckManForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);          // multipart, just with no file attached
+      try {
+        const k = await api('/api/checks', { method: 'POST', body: fd });
+        closeModal();
+        location.hash = '#/check/' + k.id;
+      } catch (err) { $('#ckManErr').textContent = err.message; }
+    });
+  });
   $('#ckFile').addEventListener('change', async (e) => {
     const f = e.target.files[0];
     e.target.value = '';
@@ -1671,7 +1730,9 @@ async function renderContractor(id) {
           <tr>
             <td><a href="#/check/${k.id}"><b>${k.number ? '#' + esc(k.number) : 'No number'}</b></a></td>
             <td>${fmtDate(k.date)}</td>
-            <td>${(k.lines || []).length ? esc((k.lines || []).map((l) => l.desc).filter(Boolean).join(', ')).slice(0, 90) : '<span class="muted">—</span>'}</td>
+            <td>${(k.lines || []).length
+              ? `${k.lines.length} job${k.lines.length === 1 ? '' : 's'}${k.lines.some((l) => !l.projectId) ? ' <span class="badge badge-amber">needs a job</span>' : ''}`
+              : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(k.total)}</b></td>
           </tr>`).join('')}
           <tr class="totals-row"><td colspan="3">Total paid (${theirs.length} check${theirs.length === 1 ? '' : 's'})</td><td class="right" style="color:var(--red)">${money(total)}</td></tr>

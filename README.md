@@ -71,7 +71,14 @@ Notes:
 
 The **Contractors** tab holds the subs and suppliers you write checks to — name, EIN or SSN, contact details.
 
-Upload a photo of a check (or its carbon stub) and the portal reads the check number, who it was made out to, the date, and the handwritten line items. If the payee isn't a contractor you already have, it offers to create them. On the check page you point each line at a job, which files that amount as a cost on that job — so a single check covering four jobs splits correctly across all four. The total sits under the check number, and every check appears on its contractor's page; click one for the breakdown.
+Checks can be logged two ways:
+
+- **📷 Scan a Check** — photograph the check or its carbon stub. The check number, payee, date and handwritten lines are read for you. Lines whose writing clearly names one job are matched to it automatically; anything ambiguous is left for you rather than guessed at. If the payee isn't a contractor you already have, it offers to create them.
+- **✍️ Enter by Hand** — no photo needed. Type the check number, date and contractor, then add a line per job. You can attach the photo later, and it back-fills onto every job cost the check created.
+
+Either way, a line is just **a job and an amount** — one line per job. A single check covering four jobs splits across all four, and the total sits under the check number. Every check appears on its contractor's page; click one for the breakdown.
+
+Receipts and checks use separate scanners tuned to each — the check one knows your company name is the payer and looks for the handwritten payee instead.
 
 Editing stays consistent: change a line's amount and the job's cost follows, move it to another job and the cost moves with it, delete the check and every cost it created is removed.
 
