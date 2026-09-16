@@ -948,7 +948,10 @@ async function renderJob(id) {
           <datalist id="invVendors">${vendors.map((v) => `<option value="${esc(v)}"></option>`).join('')}</datalist>
         </div>
         <div><label class="f">Date</label><input class="f" id="invDate" type="date" value="${today}" /></div>
-        <div><label class="f">Invoice PDF (optional)</label><input class="f" id="invFile" type="file" accept=".pdf,image/*" /></div>
+        <div><label class="f">Invoice PDF or Photo (optional)</label>
+          <input class="f" id="invFile" type="file" accept=".pdf,image/*" />
+          <div class="scan-status" id="invScan"></div>
+        </div>
         <div class="full" style="text-align:right"><button class="btn gold" id="invAddBtn">+ Add Invoice</button></div>
         <div class="error full" id="invErr"></div>
       </div>
@@ -1098,6 +1101,37 @@ async function renderJob(id) {
       renderJob(id);
     })
   );
+
+  /* Pick a receipt → try to read the vendor, total and date off it and pre-fill the form.
+   * Only empty fields get filled, so anything already typed is never clobbered. The
+   * suggestions are editable and the user is told to check them. If scanning isn't
+   * configured or the read fails, the form just stays manual. */
+  $('#invFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    const status = $('#invScan');
+    status.className = 'scan-status';
+    if (!f) { status.textContent = ''; return; }
+    status.textContent = '🔎 Reading the receipt…';
+    try {
+      const fd = new FormData();
+      fd.append('receipt', f, f.name);
+      const r = await fetch('/api/scan-receipt', { method: 'POST', body: fd });
+      if (r.status === 503) { status.textContent = ''; return; }   // not configured — stay quiet
+      const g = await r.json().catch(() => ({}));
+      if (!r.ok) { status.textContent = g.error || 'Could not read the receipt.'; return; }
+      const filled = [];
+      if (g.desc && !$('#invDesc').value.trim()) { $('#invDesc').value = g.desc; filled.push('description'); }
+      if (g.amount && !parseFloat($('#invAmount').value)) { $('#invAmount').value = g.amount.toFixed(2); filled.push('cost'); }
+      if (g.vendor && !$('#invPaidTo').value.trim()) { $('#invPaidTo').value = g.vendor; filled.push('paid to'); }
+      if (g.date) { $('#invDate').value = g.date; filled.push('date'); }
+      if (filled.length) {
+        status.className = 'scan-status ok';
+        status.textContent = `✓ Filled in ${filled.join(', ')} — check against the receipt before saving.`;
+      } else {
+        status.textContent = 'Could not make out the details. Enter them by hand.';
+      }
+    } catch { status.textContent = 'Could not read the receipt. Enter the details by hand.'; }
+  });
 
   // invoices (money out)
   $('#invAddBtn').addEventListener('click', async () => {

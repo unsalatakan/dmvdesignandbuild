@@ -736,6 +736,67 @@ route('PUT', /^\/api\/projects\/(\d+)\/materials\/(\d+)$/, (req, res, m, body, u
   saveDb(); json(res, 200, mat);
 }, { staff: true });
 
+/* ---- receipt scanning ----
+ * Sends a receipt photo/PDF to Claude and gets back the vendor, total and date.
+ * Set env var ANTHROPIC_API_KEY to enable; without it the endpoint reports
+ * "not configured" and the invoice form simply stays on manual entry. */
+const SCAN_MODEL = process.env.SCAN_MODEL || 'claude-haiku-4-5-20251001';
+const SCAN_MEDIA = { '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
+const SCAN_PROMPT = 'This is a receipt or supplier invoice for a construction job. '
+  + 'Reply with ONLY a JSON object, no prose and no code fence, using exactly these keys: '
+  + '"vendor" (the business that was paid, e.g. "The Home Depot"), '
+  + '"amount" (the grand total actually charged, as a plain number with no currency symbol or commas), '
+  + '"date" (the transaction date as YYYY-MM-DD), '
+  + '"desc" (a short description of what was bought, 6 words or fewer). '
+  + 'Use null for any field you cannot read with confidence. Never guess at the amount.';
+
+route('POST', /^\/api\/scan-receipt$/, async (req, res, m, body) => {
+  if (!process.env.ANTHROPIC_API_KEY) return json(res, 503, { error: 'Receipt scanning is not set up on this server.' });
+  const f = body.files && body.files.receipt;
+  if (!f) return json(res, 400, { error: 'No file uploaded' });
+  const media = SCAN_MEDIA[path.extname(f.originalname).toLowerCase()];
+  if (!media) return json(res, 400, { error: 'Receipt must be a PDF or an image' });
+  if (f.buffer.length > 4.5 * 1024 * 1024) return json(res, 400, { error: 'Receipt is too large to scan (max ~4.5 MB)' });
+
+  const source = { type: 'base64', media_type: media, data: f.buffer.toString('base64') };
+  const content = [
+    media === 'application/pdf' ? { type: 'document', source } : { type: 'image', source },
+    { type: 'text', text: SCAN_PROMPT },
+  ];
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: SCAN_MODEL, max_tokens: 300, messages: [{ role: 'user', content }] }),
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!r.ok) {
+      console.error('Receipt scan rejected (' + r.status + '):', await r.text());
+      return json(res, 502, { error: 'Could not read the receipt. Enter the details by hand.' });
+    }
+    const out = await r.json();
+    const text = (out.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+    const match = text.match(/\{[\s\S]*\}/);            // tolerate a stray code fence or lead-in
+    if (!match) return json(res, 502, { error: 'Could not read the receipt. Enter the details by hand.' });
+    const g = JSON.parse(match[0]);
+    // keep a leading minus so a refund/credit total is rejected rather than flipped positive
+    const amount = Number(String(g.amount ?? '').replace(/[^0-9.-]/g, ''));
+    json(res, 200, {
+      vendor: g.vendor ? String(g.vendor).trim().slice(0, 80) : null,
+      amount: Number.isFinite(amount) && amount > 0 ? amount : null,
+      date: /^\d{4}-\d{2}-\d{2}$/.test(String(g.date || '')) ? g.date : null,
+      desc: g.desc ? String(g.desc).trim().slice(0, 120) : null,
+    });
+  } catch (e) {
+    console.error('Receipt scan failed:', e.message);
+    json(res, 502, { error: 'Could not read the receipt. Enter the details by hand.' });
+  }
+}, { staff: true, multipart: true });
+
 /* invoices — money going OUT on a job: subs, suppliers, permits.
  * Internal only; the PDF is optional so a cost can be logged before the paperwork lands. */
 const INVOICE_FILE_RE = /\.(pdf|png|jpe?g|webp|heic|heif)$/i;
@@ -1058,5 +1119,6 @@ server.listen(PORT, () => {
   console.log('  Running at:  http://localhost:' + PORT);
   console.log('  Storage: ' + (R2 ? 'Cloudflare R2 (bucket: ' + R2.bucket + ')' : 'local disk'));
   console.log('  Email: ' + (process.env.RESEND_API_KEY ? 'enabled, sending as ' + RESEND_FROM : 'DISABLED — RESEND_API_KEY not set'));
+  console.log('  Receipt scanning: ' + (process.env.ANTHROPIC_API_KEY ? 'enabled (' + SCAN_MODEL + ')' : 'DISABLED — ANTHROPIC_API_KEY not set'));
   console.log('');
 });

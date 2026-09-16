@@ -16,7 +16,7 @@ Then open **http://localhost:3000** in your browser.
 ## What it does
 
 - **Home** — dashboard with job count, **Payments Due** (everything unpaid across all jobs, with a table of which job owes what and when), total contract value, materials still to order, and a map of all jobs. Click the map to expand it full-page; click a pin to open that job.
-- **Invoices & Job Costs** — on each job, log what you're spending: description, cost, who it was paid to, the date, and optionally the invoice PDF (attach it later if you don't have it yet). The table totals at the bottom, and the panel shows Contract Price / Total Invoiced / Profit So Far. "Paid To" suggests subs and suppliers you've already used on that job. Internal only — customers never see invoices or their files.
+- **Invoices & Job Costs** — on each job, log what you're spending: description, cost, who it was paid to, the date, and optionally the invoice PDF (attach it later if you don't have it yet). The table totals at the bottom, and the panel shows Contract Price / Total Invoiced / Profit So Far. "Paid To" suggests subs and suppliers you've already used on that job. Attach a Home Depot receipt and it can fill the fields in for you — see **Receipt scanning** below. Internal only — customers never see invoices or their files.
 - **To-Do** — the home page panel now carries a **General** list at the top for anything not tied to a job (licenses, insurance, calls to make), plus the per-job notes underneath. General items are admin-only; project managers still see job notes. Type in the box and press Enter to add.
 - **Payment schedule** — on any job, type in the payments you expect: what for, how much, and the due date. Unpaid ones show as a banner at the top of the job page (amber, red once overdue) and roll up onto the home page. Tick one off with ✓ and it files itself into Payments Received automatically. **This is internal only** — customers see the contract price on their job and nothing else about money: no schedule, no due dates, no receipts, no balance, no material costs.
 - **Jobs** — create projects with name, address, lockbox code, price, contract upload, arch plan PDF upload, start date, and assigned customer. The address is automatically located on the map (needs internet).
@@ -38,6 +38,31 @@ First row = headers. Recognized columns (any order, flexible names):
 - Re-uploading a file replaces the job's material list.
 - `.xlsx` and `.csv` both work. A ready-to-use `materials-template.xlsx` (full material takeoff workbook) is included.
 - **Material takeoff workbooks** are also supported: if the workbook has a `Summary` tab with `Category | Item | Quantity | Unit | Unit Cost ($) | Total Cost ($) | Supplier Link` columns, the portal reads that tab, skips subtotal and grand-total rows, keeps supplier hyperlinks, and groups items by category — each category is one order to place. The job page shows how many orders are left and the total cost.
+
+## Receipt scanning (optional)
+
+Attach a receipt photo or PDF to an invoice and the portal reads the vendor, total and date off it, filling the form in for you. **Always check the numbers against the receipt before saving** — the fields stay editable and nothing is saved automatically.
+
+To turn it on:
+
+1. Create an API key at [console.anthropic.com](https://console.anthropic.com) → API Keys.
+2. Set it as an environment variable before starting the server:
+
+   ```
+   ANTHROPIC_API_KEY=sk-ant-... node server.js
+   ```
+
+   On a host like Render or Railway, add `ANTHROPIC_API_KEY` in that service's environment-variables settings instead.
+
+3. Restart. The startup banner will say `Receipt scanning: enabled`.
+
+Notes:
+
+- Costs roughly **a quarter of a cent per receipt** — about $0.25 for 100 receipts.
+- Without the key the feature is simply off; the invoice form works as normal manual entry.
+- Optional `SCAN_MODEL` env var overrides which model is used.
+- If a receipt can't be read the form stays blank and tells you to enter it by hand. Nothing breaks and no invoice is lost.
+- Receipts are sent to Anthropic's API to be read. They are not used to train models.
 
 ## Notes
 
