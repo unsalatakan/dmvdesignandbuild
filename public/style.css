@@ -465,3 +465,26 @@ html.light .jobs-controls input[type=search] { background: #fff; }
 
 /* recent receipts list */
 @media (max-width: 800px) { .filed-table { min-width: 640px; } }
+
+/* in-page file viewer — opens over the current page, nothing reloads */
+.file-view { padding: 0; }
+.fv-frame { width: 92vw; height: 88vh; border: none; border-radius: 8px; background: #fff; box-shadow: 0 12px 44px rgba(0,0,0,0.6); }
+.lb-open { top: 16px; right: 74px; font-size: 20px; text-decoration: none; display: flex; align-items: center; justify-content: center; }
+.check-img { cursor: zoom-in; }
+@media (max-width: 800px) {
+  .fv-frame { width: 96vw; height: 82vh; }
+  .lb-open { right: 70px; }
+}
+
+/* scanning progress + check completeness */
+.spin { display: inline-block; width: 13px; height: 13px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.scan-status.busy { color: var(--gold-dark); font-weight: 600; }
+html:not(.light) .scan-status.busy { color: #48c684; }
+
+.check-todo { background: #fff6e5; border: 1px solid #f0c67a; border-left: 5px solid #d99417; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 20px; font-size: 13.5px; color: #6b5210; }
+.check-todo b { color: #8a6516; }
+.check-todo.done { background: #eaf6ef; border-color: #c6e5d3; border-left-color: var(--gold); color: var(--gold-dark); font-weight: 600; }
+html:not(.light) .check-todo { background: rgba(217,148,23,0.14); border-color: rgba(217,148,23,0.4); color: #e8c583; }
+html:not(.light) .check-todo b { color: #f0b445; }
+html:not(.light) .check-todo.done { background: rgba(29,157,92,0.14); border-color: rgba(29,157,92,0.4); color: #48c684; }

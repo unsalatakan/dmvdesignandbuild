@@ -64,7 +64,7 @@ function nextDue(p) {
  * Clicks are stopped from bubbling so these work inside a clickable job row/card. */
 function fileChips(p) {
   const chip = (file, name, icon, label) => file
-    ? `<a class="mini-chip" href="/api/file/${file}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${esc(name || label)}">${icon} ${label}</a>`
+    ? `<a class="mini-chip" href="#" data-file-view="${file}" data-file-name="${esc(name || label)}" title="${esc(name || label)}">${icon} ${label}</a>`
     : `<span class="mini-chip off" title="Not uploaded">${icon} ${label}</span>`;
   return chip(p.contractFile, p.contractName, '📄', 'Contract') + chip(p.planFile, p.planName, '📐', 'Plan');
 }
@@ -464,7 +464,7 @@ async function renderHome() {
   );
   document.querySelectorAll('[data-gdel]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Delete this to-do?')) return;
+      if (!await askConfirm('Delete this to-do?')) return;
       await api('/api/todos/' + b.dataset.gdel, { method: 'DELETE' });
       renderHome();
     })
@@ -876,8 +876,8 @@ async function renderJob(id) {
         <div><div class="k">Customer</div><div class="v">${esc(p.customerName || '—')}</div></div>
       </div>
       <div style="margin-top:16px">
-        ${p.contractFile ? `<a class="file-chip" href="/api/file/${p.contractFile}" target="_blank">📄 Contract — ${esc(p.contractName)}</a>` : '<span class="muted" style="margin-right:12px">No contract uploaded.</span>'}
-        ${p.planFile ? `<a class="file-chip" href="/api/file/${p.planFile}" target="_blank">📐 Arch Plan — ${esc(p.planName)}</a>` : '<span class="muted">No arch plan uploaded.</span>'}
+        ${p.contractFile ? `<a class="file-chip" href="#" data-file-view="${p.contractFile}" data-file-name="${esc(p.contractName || '')}">📄 Contract — ${esc(p.contractName)}</a>` : '<span class="muted" style="margin-right:12px">No contract uploaded.</span>'}
+        ${p.planFile ? `<a class="file-chip" href="#" data-file-view="${p.planFile}" data-file-name="${esc(p.planName || '')}">📐 Arch Plan — ${esc(p.planName)}</a>` : '<span class="muted">No arch plan uploaded.</span>'}
       </div>
       ${!p.lat && isAdmin ? '<div class="muted" style="margin-top:10px">⚠️ Address could not be located on the map. Edit the project and refine the address.</div>' : ''}
     </div>`}
@@ -982,7 +982,7 @@ async function renderJob(id) {
             <td>${esc(x.desc)}</td>
             <td>${x.paidTo ? esc(x.paidTo) : '<span class="muted">—</span>'}</td>
             <td>${x.file
-              ? `<a class="mini-chip" href="/api/file/${x.file}" target="_blank" rel="noopener" title="${esc(x.fileName || '')}">📄 View</a>`
+              ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}" title="Open">📄 View</a>`
               : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(x.amount)}</b></td>
             <td class="right">${isAdmin ? `<button class="del" data-delinv="${x.id}" title="Delete invoice">✕</button>` : ''}</td>
@@ -1098,7 +1098,7 @@ async function renderJob(id) {
     document.querySelectorAll('[data-delphoto]').forEach((b) =>
       b.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!confirm('Delete this photo?')) return;
+        if (!await askConfirm('Delete this photo?')) return;
         await api(`/api/projects/${id}/photos/${b.dataset.delphoto}`, { method: 'DELETE' });
         renderJob(id);
       })
@@ -1109,7 +1109,7 @@ async function renderJob(id) {
 
   $('#editProjBtn').addEventListener('click', () => projectModal(p));
   if ($('#delProjBtn')) $('#delProjBtn').addEventListener('click', async () => {
-    if (!confirm('Delete this project? This cannot be undone.')) return;
+    if (!await askConfirm('Delete this project? This cannot be undone.')) return;
     await api('/api/projects/' + id, { method: 'DELETE' });
     location.hash = '#/jobs';
   });
@@ -1129,14 +1129,14 @@ async function renderJob(id) {
   document.querySelectorAll('[data-duepaid]').forEach((b) =>
     b.addEventListener('click', async () => {
       const nowPaid = b.dataset.now === '1';
-      if (nowPaid && !confirm('Mark this back as unpaid? Its entry in Payments Received will be removed.')) return;
+      if (nowPaid && !await askConfirm('Mark this back as unpaid? Its entry in Payments Received will be removed.', { ok: 'Mark Unpaid' })) return;
       await api(`/api/projects/${id}/dues/${b.dataset.duepaid}`, { method: 'PUT', json: { paid: !nowPaid } });
       renderJob(id);
     })
   );
   document.querySelectorAll('[data-deldue]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Delete this scheduled payment?')) return;
+      if (!await askConfirm('Delete this scheduled payment?')) return;
       await api(`/api/projects/${id}/dues/${b.dataset.deldue}`, { method: 'DELETE' });
       renderJob(id);
     })
@@ -1153,7 +1153,7 @@ async function renderJob(id) {
   });
   document.querySelectorAll('[data-delpay]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Delete this payment?')) return;
+      if (!await askConfirm('Delete this payment?')) return;
       await api(`/api/projects/${id}/payments/${b.dataset.delpay}`, { method: 'DELETE' });
       renderJob(id);
     })
@@ -1216,7 +1216,7 @@ async function renderJob(id) {
   });
   document.querySelectorAll('[data-delinv]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Delete this invoice? The attached file is removed too.')) return;
+      if (!await askConfirm('Delete this invoice? The attached file is removed too.')) return;
       await api(`/api/projects/${id}/invoices/${b.dataset.delinv}`, { method: 'DELETE' });
       renderJob(id);
     })
@@ -1306,7 +1306,7 @@ async function renderReceipts() {
     ${receipts.length ? `<div class="receipt-grid">${receipts.map((r) => `
       <div class="panel receipt-card" data-rc="${r.id}">
         <div class="receipt-head">
-          <a class="mini-chip" href="/api/file/${r.file}" target="_blank" rel="noopener">📄 View receipt</a>
+          <a class="mini-chip" href="#" data-file-view="${r.file}" data-file-name="${esc(r.fileName || '')}">📄 View receipt</a>
           <span>
             <button class="del" data-rescan="${r.id}" title="Try reading it again">🔎</button>
             <button class="del" data-delrec="${r.id}" title="Delete receipt">✕</button>
@@ -1345,7 +1345,7 @@ async function renderReceipts() {
             <td>${esc(x.desc)}</td>
             <td>${x.paidTo ? esc(x.paidTo) : '<span class="muted">—</span>'}</td>
             <td><a href="#/job/${x.projectId}">${esc(x.projectName)}</a></td>
-            <td>${x.file ? `<a class="mini-chip" href="/api/file/${x.file}" target="_blank" rel="noopener">📄 View</a>` : '<span class="muted">—</span>'}</td>
+            <td>${x.file ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}">📄 View</a>` : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(x.amount)}</b></td>
           </tr>`).join('')}
           ${filed.length > 60 ? `<tr><td colspan="6" class="muted">Showing the 60 most recent of ${filed.length}.</td></tr>` : ''}
@@ -1389,25 +1389,6 @@ async function renderReceipts() {
       } catch (err) { note.textContent = err.message; }
     });
   });
-  /* One delegated click handler for the whole page. Per-element listeners break
-   * silently if anything above them throws; this cannot. */
-  $('#main').addEventListener('click', async (e) => {
-    const rescan = e.target.closest('[data-rescan]');
-    const del = e.target.closest('[data-delrec]');
-    if (!rescan && !del) return;
-    const id = (rescan || del).dataset.rescan || del.dataset.delrec;
-    const note = document.querySelector(`[data-save="${id}"]`);
-    if (rescan) {
-      rescan.disabled = true;
-      if (note) note.textContent = 'Reading again…';
-      try { await api('/api/receipts/' + id + '/rescan', { method: 'POST' }); renderReceipts(); }
-      catch (err) { if (note) note.textContent = err.message; rescan.disabled = false; }
-      return;
-    }
-    if (!confirm('Delete this receipt? The file is removed too.')) return;
-    try { await api('/api/receipts/' + id, { method: 'DELETE' }); renderReceipts(); }
-    catch (err) { if (note) note.textContent = err.message; else alert(err.message); }
-  });
 
 }
 
@@ -1449,6 +1430,17 @@ async function renderCheck(id) {
     </div>
 
     ${k.scanned ? '' : `<div class="panel scan-status">⚠️ ${esc(k.scanError || 'Could not read this check automatically')} — fill the details in below.</div>`}
+
+    ${(() => {
+      const todo = [];
+      if (!k.number) todo.push('check number');
+      if (!k.contractorId) todo.push('who it was paid to');
+      if (!lines.length) todo.push('at least one job line');
+      else if (unassigned) todo.push(`a job for ${unassigned} line${unassigned === 1 ? '' : 's'}`);
+      return todo.length
+        ? `<div class="check-todo">Still needed: ${todo.map((t) => `<b>${t}</b>`).join(' · ')}</div>`
+        : '<div class="check-todo done">✓ This check is complete — every line is costed to a job.</div>';
+    })()}
 
     <div class="panel">
       <h3>Check Details</h3>
@@ -1507,7 +1499,7 @@ async function renderCheck(id) {
       <h3>Check Image</h3>
       <input type="file" id="ckPhotoFile" accept=".pdf,image/*" style="display:none" />
       ${k.file
-        ? `<a href="/api/file/${k.file}" target="_blank" rel="noopener"><img class="check-img" src="/api/file/${k.file}" alt="Check ${esc(k.number)}" /></a>
+        ? `<img class="check-img" src="/api/file/${k.file}" alt="Check ${esc(k.number)}" data-file-view="${k.file}" data-file-name="Check ${esc(k.number)}" />
            <div style="margin-top:12px"><button class="btn" id="ckPhotoBtn">Replace Image</button></div>`
         : `<div class="muted" style="margin-bottom:12px">No image on this check — it was entered by hand.</div>
            <button class="btn gold" id="ckPhotoBtn">📷 Attach Photo</button>`}
@@ -1572,13 +1564,13 @@ async function renderCheck(id) {
   });
   document.querySelectorAll('[data-delline]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Remove this line? Any job cost it created is removed too.')) return;
+      if (!await askConfirm('Remove this line? Any job cost it created is removed too.')) return;
       await api(`/api/checks/${id}/lines/${b.dataset.delline}`, { method: 'DELETE' });
       renderCheck(id);
     })
   );
   $('#delCheckBtn').addEventListener('click', async () => {
-    if (!confirm('Delete this check? Every job cost it created is removed too.')) return;
+    if (!await askConfirm('Delete this check? Every job cost it created is removed too.')) return;
     await api('/api/checks/' + id, { method: 'DELETE' });
     location.hash = k.contractorId ? '#/contractor/' + k.contractorId : '#/contractors';
   });
@@ -1729,24 +1721,36 @@ async function renderContractors() {
     e.target.value = '';
     if (!f) return;
     const status = $('#ckUpStatus');
-    status.className = 'scan-status';
-    status.textContent = '🔎 Reading the check…';
+    const btn = $('#ckUpBtn');
+    const step = (t) => { status.className = 'scan-status busy'; status.innerHTML = `<span class="spin"></span> ${t}`; };
+    btn.disabled = true;
+    step('Preparing the photo…');
     try {
       const up = await prepReceipt(f);
       const fd = new FormData();
       fd.append('check', up, up.name);
+      step('Reading the check — number, payee and lines…');
       const k = await api('/api/checks', { method: 'POST', body: fd });
-      // unknown payee — offer to create them rather than silently leaving it unlinked
-      if (!k.payeeMatched && k.payee &&
-          confirm(`This check was written to "${k.payee}", who isn't in your contractors.\n\nCreate them now?`)) {
-        contractorModal({ name: k.payee }, async (saved) => {
-          await api('/api/checks/' + k.id, { method: 'PUT', json: { contractorId: saved.id } });
-          location.hash = '#/check/' + k.id;
-        });
-        return;
+      // unknown payee — offer to create them rather than leaving the check unlinked
+      if (!k.payeeMatched && k.payee) {
+        status.className = 'scan-status';
+        status.textContent = '';
+        const make = await askConfirm(
+          `This check is made out to "${k.payee}", who isn't in your contractors yet. Add them now?`,
+          { ok: 'Add Contractor', danger: false });
+        if (make) {
+          contractorModal({ name: k.payee }, async (saved) => {
+            await api('/api/checks/' + k.id, { method: 'PUT', json: { contractorId: saved.id } });
+            location.hash = '#/check/' + k.id;
+          });
+          return;
+        }
       }
       location.hash = '#/check/' + k.id;
-    } catch (err) { status.className = 'scan-status'; status.textContent = err.message; }
+    } catch (err) {
+      status.className = 'scan-status';
+      status.textContent = err.message;
+    } finally { btn.disabled = false; }
   });
 
   $('#newConBtn').addEventListener('click', () => contractorModal(null, () => renderContractors()));
@@ -1758,7 +1762,7 @@ async function renderContractors() {
   );
   document.querySelectorAll('[data-delcon]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Delete this contractor?')) return;
+      if (!await askConfirm('Delete this contractor?')) return;
       try {
         await api('/api/contractors/' + b.dataset.delcon, { method: 'DELETE' });
         renderContractors();
@@ -1896,7 +1900,7 @@ async function renderCustomers() {
   );
   document.querySelectorAll('[data-del]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Delete this customer login? Their jobs stay but become unassigned.')) return;
+      if (!await askConfirm('Delete this customer login? Their jobs stay but become unassigned.')) return;
       await api('/api/customers/' + b.dataset.del, { method: 'DELETE' });
       renderCustomers();
     })
@@ -1951,7 +1955,7 @@ async function renderJobPhotos(id) {
   document.querySelectorAll('[data-delphoto]').forEach((b) =>
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!confirm('Delete this photo?')) return;
+      if (!await askConfirm('Delete this photo?')) return;
       await api(`/api/projects/${id}/photos/${b.dataset.delphoto}`, { method: 'DELETE' });
       renderJobPhotos(id);
     })
@@ -2040,7 +2044,7 @@ async function renderManagers() {
   );
   document.querySelectorAll('[data-deldel]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Delete this delivery login?')) return;
+      if (!await askConfirm('Delete this delivery login?')) return;
       await api('/api/delivery/' + b.dataset.deldel, { method: 'DELETE' });
       renderManagers();
     })
@@ -2087,7 +2091,7 @@ async function renderManagers() {
   );
   document.querySelectorAll('[data-pmdel]').forEach((b) =>
     b.addEventListener('click', async () => {
-      if (!confirm('Delete this manager login? Their jobs stay but become unassigned.')) return;
+      if (!await askConfirm('Delete this manager login? Their jobs stay but become unassigned.')) return;
       await api('/api/pms/' + b.dataset.pmdel, { method: 'DELETE' });
       renderManagers();
     })
@@ -2317,6 +2321,81 @@ function openModal(html) {
   $('#modal').classList.remove('hidden');
 }
 function closeModal() { $('#modal').classList.add('hidden'); }
+
+/* In-app replacement for window.confirm().
+ * Native confirm() is unreliable on phones — several mobile browsers, and any page
+ * running as a home-screen app, suppress it and return false, so a delete looked
+ * like it simply did nothing. This dialog behaves the same everywhere. */
+function askConfirm(message, { ok = 'Delete', danger = true } = {}) {
+  return new Promise((resolve) => {
+    openModal(`
+      <h2>${esc(message)}</h2>
+      <div class="modal-actions" style="margin-top:20px">
+        <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" id="askNo">Cancel</button>
+        <button type="button" class="btn ${danger ? 'danger' : 'gold'}" id="askYes">${esc(ok)}</button>
+      </div>`);
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; closeModal(); resolve(v); };
+    $('#askYes').addEventListener('click', () => finish(true));
+    $('#askNo').addEventListener('click', () => finish(false));
+    // dismissing by tapping the backdrop counts as "no"
+    const back = $('#modal');
+    const onBack = (e) => { if (e.target === back) { back.removeEventListener('click', onBack); finish(false); } };
+    back.addEventListener('click', onBack);
+  });
+}
+
+/* ---------- in-page file viewer ----------
+ * Opens a receipt, invoice or check in an overlay on the current page. No new tab,
+ * no navigation, so nothing reloads and the page you were on is still underneath. */
+function openFile(file, name = '') {
+  if (!file) return;
+  const isPdf = /\.pdf$/i.test(file) || /\.pdf$/i.test(name);
+  const back = document.createElement('div');
+  back.className = 'lightbox file-view';
+  back.innerHTML = `
+    <button class="lb-btn lb-close" title="Close">✕</button>
+    <a class="lb-btn lb-open" href="/api/file/${file}" download title="Download">⤓</a>
+    ${isPdf
+      ? `<iframe class="fv-frame" src="/api/file/${file}" title="${esc(name)}"></iframe>`
+      : `<img class="lb-img" src="/api/file/${file}" alt="${esc(name)}" />`}
+    ${name ? `<div class="lb-count">${esc(name)}</div>` : ''}`;
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  back.querySelector('.lb-close').addEventListener('click', close);
+  back.addEventListener('click', (e) => { if (e.target === back) close(); });
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(back);
+}
+/* Receipt actions are delegated from the document once, not re-bound on every
+ * render — re-binding stacked a new listener each time the page redrew, so one tap
+ * fired the handler N times over. */
+document.addEventListener('click', async (e) => {
+  const rescan = e.target.closest('[data-rescan]');
+  const del = e.target.closest('[data-delrec]');
+  if (!rescan && !del) return;
+  const id = rescan ? rescan.dataset.rescan : del.dataset.delrec;
+  const note = document.querySelector(`[data-save="${id}"]`);
+  if (rescan) {
+    rescan.disabled = true;
+    if (note) note.textContent = 'Reading again…';
+    try { await api('/api/receipts/' + id + '/rescan', { method: 'POST' }); renderReceipts(); }
+    catch (err) { if (note) note.textContent = err.message; rescan.disabled = false; }
+    return;
+  }
+  if (!await askConfirm('Delete this receipt? The file is removed too.')) return;
+  try { await api('/api/receipts/' + id, { method: 'DELETE' }); renderReceipts(); }
+  catch (err) { alert(err.message); }
+});
+
+/* One global handler so every [data-file-view] link opens in place, on any page. */
+document.addEventListener('click', (e) => {
+  const link = e.target.closest('[data-file-view]');
+  if (!link) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openFile(link.dataset.fileView, link.dataset.fileName || '');
+});
 $('#modal').addEventListener('click', (e) => { if (e.target === $('#modal')) closeModal(); });
 
 boot();
