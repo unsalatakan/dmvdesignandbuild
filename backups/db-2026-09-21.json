@@ -1,0 +1,54 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "dmv",
+      "password": "e8f76633788941429d3cab6aa1ad1ad8a5cb9a9e59d02d5c6881c2b90d9a203b",
+      "role": "admin",
+      "name": "DMV Design and Build"
+    }
+  ],
+  "projects": [
+    {
+      "id": 3,
+      "overhead": true,
+      "name": "DMV Design and Build — General",
+      "address": "",
+      "lockbox": null,
+      "price": 0,
+      "startDate": null,
+      "status": "active",
+      "customerId": null,
+      "pmId": null,
+      "lat": null,
+      "lng": null,
+      "contractFile": null,
+      "contractName": null,
+      "planFile": null,
+      "planName": null,
+      "materialFileName": null,
+      "materials": [],
+      "notes": [],
+      "payments": [],
+      "dues": [],
+      "invoices": [],
+      "photos": [],
+      "created": "2026-09-21T23:45:52.253Z"
+    }
+  ],
+  "seq": 4,
+  "sessions": {
+    "b13ec1851115a06f18385ba488da21bd40d76b279780c8a0": {
+      "userId": 1,
+      "expires": 1785864148990
+    },
+    "d229f342dab7556234d5f6979f427b2b73ba025456940f22": {
+      "userId": 1,
+      "expires": 1785864165636
+    }
+  },
+  "todos": [],
+  "receipts": [],
+  "contractors": [],
+  "checks": []
+}

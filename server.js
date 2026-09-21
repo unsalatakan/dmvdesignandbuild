@@ -830,6 +830,22 @@ route('PUT', /^\/api\/projects\/(\d+)\/materials\/(\d+)$/, (req, res, m, body, u
   saveDb(); json(res, 200, mat);
 }, { staff: true });
 
+/* ---- expense categories ----
+ * Every job cost carries one. They drive the P&L and the year-end tax summary, so
+ * the list is deliberately short and maps onto the lines a contractor actually files. */
+const EXPENSE_CATEGORIES = [
+  'Materials', 'Subcontractor', 'Labor', 'Permits & Fees', 'Equipment Rental',
+  'Tools', 'Fuel & Vehicle', 'Insurance', 'Office & Admin', 'Other',
+];
+const cleanCategory = (v) => {
+  const want = String(v || '').trim().toLowerCase();
+  return EXPENSE_CATEGORIES.find((c) => c.toLowerCase() === want) || 'Other';
+};
+
+route('GET', /^\/api\/expense-categories$/, (req, res) => {
+  json(res, 200, EXPENSE_CATEGORIES);
+}, { crew: true });
+
 /* ---- receipt scanning ----
  * Sends a receipt photo/PDF to Claude and gets back the vendor, total and date.
  * Set env var ANTHROPIC_API_KEY to enable; without it the endpoint reports
@@ -844,7 +860,8 @@ const SCAN_PROMPT = 'This is a receipt or supplier invoice for a construction jo
   + '"vendor" (the business that was paid, e.g. "The Home Depot"), '
   + '"amount" (the grand total actually charged, as a plain number with no currency symbol or commas), '
   + '"date" (the transaction date as YYYY-MM-DD), '
-  + '"desc" (a short description of what was bought, 6 words or fewer). '
+  + '"desc" (a short description of what was bought, 6 words or fewer), '
+  + '"category" (exactly one of: ' + EXPENSE_CATEGORIES.join(', ') + '). '
   + 'Use null for any field you cannot read with confidence. Never guess at the amount.';
 
 /* Reads one receipt. Returns the parsed fields, or throws with a message fit to show. */
@@ -916,6 +933,7 @@ async function scanReceipt(f) {
     amount: Number.isFinite(amount) && amount > 0 ? amount : null,
     date: /^\d{4}-\d{2}-\d{2}$/.test(String(g.date || '')) ? g.date : null,
     desc: g.desc ? String(g.desc).trim().slice(0, 120) : null,
+    category: cleanCategory(g.category),
   };
 }
 
@@ -944,6 +962,7 @@ route('POST', /^\/api\/projects\/(\d+)\/invoices$/, async (req, res, m, body, us
     id: nextId(),
     desc: String(fields.desc || '').trim() || 'Invoice',
     paidTo: String(fields.paidTo || '').trim(),
+    category: cleanCategory(fields.category),
     amount,
     date: fields.date || new Date().toISOString().slice(0, 10),
     file: f ? f.filename : null,
@@ -961,6 +980,7 @@ route('PUT', /^\/api\/projects\/(\d+)\/invoices\/(\d+)$/, async (req, res, m, bo
   const { fields, files } = body;
   if (fields.desc !== undefined) inv.desc = String(fields.desc).trim() || 'Invoice';
   if (fields.paidTo !== undefined) inv.paidTo = String(fields.paidTo).trim();
+  if (fields.category !== undefined) inv.category = cleanCategory(fields.category);
   if (fields.date !== undefined) inv.date = fields.date || inv.date;
   if (fields.amount !== undefined) {
     const amount = Number(fields.amount);
@@ -1010,6 +1030,7 @@ route('POST', /^\/api\/receipts$/, async (req, res, m, body, user) => {
     id: nextId(),
     file: f.filename, fileName: f.originalname,
     desc: g.desc || '', paidTo: g.vendor || '', amount: g.amount || null,
+    category: cleanCategory(g.category),
     date: g.date || new Date().toISOString().slice(0, 10),
     scanned: !scanError, scanError,
     uploaded: new Date().toISOString(), by: user.name,
@@ -1053,6 +1074,7 @@ route('PUT', /^\/api\/receipts\/(\d+)$/, (req, res, m, body) => {
   if (!r) return json(res, 404, { error: 'Receipt not found' });
   if (body.desc !== undefined) r.desc = String(body.desc).trim();
   if (body.paidTo !== undefined) r.paidTo = String(body.paidTo).trim();
+  if (body.category !== undefined) r.category = cleanCategory(body.category);
   if (body.date !== undefined) r.date = body.date || r.date;
   if (body.amount !== undefined) {
     const a = Number(body.amount);
@@ -1073,6 +1095,7 @@ route('POST', /^\/api\/receipts\/(\d+)\/assign$/, (req, res, m, body, user) => {
     id: nextId(),
     desc: r.desc || 'Receipt',
     paidTo: r.paidTo || '',
+    category: cleanCategory(r.category),
     amount: r.amount,
     date: r.date,
     file: r.file, fileName: r.fileName,
@@ -1300,6 +1323,7 @@ function invoiceForLine(k, line, contractorName) {
     id: nextId(),
     desc: k.number ? 'Check #' + k.number : 'Check payment',
     paidTo: contractorName || k.payee || '',
+    category: cleanCategory(line.category || 'Subcontractor'),
     amount: line.amount,
     date: k.date,
     file: k.file, fileName: k.fileName,
@@ -1515,6 +1539,98 @@ route('DELETE', /^\/api\/checks\/(\d+)$/, async (req, res, m) => {
   if (k.file) await deleteFile(k.file);
   db.checks = (db.checks || []).filter((x) => x.id !== k.id);
   saveDb(); json(res, 200, { ok: true });
+}, { admin: true });
+
+/* ================= reports =================
+ * Cash basis: money counts on the day it moved, which is how most small contractors
+ * file. Income = payments actually received. Expenses = job costs on their dated day.
+ * This is a management report, not a set of books — there is no ledger behind it. */
+const inRange = (d, from, to) => {
+  const day = String(d || '').slice(0, 10);
+  if (!day) return false;
+  if (from && day < from) return false;
+  if (to && day > to) return false;
+  return true;
+};
+
+route('GET', /^\/api\/reports\/pl$/, (req, res, m, b, user, query) => {
+  const from = query.from || '';
+  const to = query.to || '';
+  let income = 0;
+  const byCategory = {};
+  const byJob = [];
+  for (const p of db.projects) {
+    const received = (p.payments || [])
+      .filter((x) => inRange(x.date || x.created, from, to))
+      .reduce((s, x) => s + (x.amount || 0), 0);
+    const costs = (p.invoices || []).filter((x) => inRange(x.date || x.created, from, to));
+    const spent = costs.reduce((s, x) => s + (x.amount || 0), 0);
+    for (const c of costs) {
+      const k = cleanCategory(c.category);
+      byCategory[k] = cents((byCategory[k] || 0) + (c.amount || 0));
+    }
+    income = cents(income + received);
+    if (received || spent) {
+      byJob.push({
+        id: p.id, name: p.name, overhead: !!p.overhead,
+        price: p.price || 0, received: cents(received), spent: cents(spent),
+        net: cents(received - spent),
+      });
+    }
+  }
+  const expenses = cents(Object.values(byCategory).reduce((s, v) => s + v, 0));
+  byJob.sort((a, b2) => b2.net - a.net);
+  json(res, 200, {
+    from, to, basis: 'cash',
+    income, expenses, net: cents(income - expenses),
+    byCategory: EXPENSE_CATEGORIES.map((c) => ({ category: c, amount: byCategory[c] || 0 }))
+      .filter((x) => x.amount),
+    byJob,
+  });
+}, { admin: true });
+
+/* Lifetime profitability per job — contract value against everything it has cost. */
+route('GET', /^\/api\/reports\/jobs$/, (req, res) => {
+  const rows = db.projects.filter((p) => !p.overhead).map((p) => {
+    const spent = cents((p.invoices || []).reduce((s, x) => s + (x.amount || 0), 0));
+    const received = cents((p.payments || []).reduce((s, x) => s + (x.amount || 0), 0));
+    const price = p.price || 0;
+    return {
+      id: p.id, name: p.name, status: p.status, customerName:
+        (db.users.find((u) => u.id === p.customerId) || {}).name || null,
+      price, spent, received,
+      profit: cents(price - spent),
+      margin: price ? Math.round(((price - spent) / price) * 1000) / 10 : null,
+      unbilled: cents(price - received),
+    };
+  });
+  json(res, 200, rows);
+}, { admin: true });
+
+/* 1099-NEC summary. The reporting threshold rose from $600 to $2,000 for payments
+ * made from 2026 onward, so it is looked up per year rather than hard-coded. */
+const nec1099Threshold = (year) => (Number(year) >= 2026 ? 2000 : 600);
+
+route('GET', /^\/api\/reports\/1099$/, (req, res, m, b, user, query) => {
+  const year = String(query.year || new Date().getFullYear());
+  const threshold = nec1099Threshold(year);
+  const rows = (db.contractors || []).map((c) => {
+    const checks = (db.checks || []).filter((k) => k.contractorId === c.id && String(k.date).slice(0, 4) === year);
+    const paid = cents(checks.reduce((s, k) => s + (k.lines || []).reduce((a, l) => a + (l.amount || 0), 0), 0));
+    return {
+      id: c.id, name: c.name,
+      taxIdType: c.taxIdType, taxIdLast4: c.taxIdLast4, hasTaxId: !!c.taxIdEnc,
+      checkCount: checks.length, paid,
+      reportable: paid >= threshold,
+    };
+  }).filter((r) => r.paid > 0).sort((a, b2) => b2.paid - a.paid);
+  json(res, 200, {
+    year, threshold,
+    totalPaid: cents(rows.reduce((s, r) => s + r.paid, 0)),
+    reportableCount: rows.filter((r) => r.reportable).length,
+    missingTaxId: rows.filter((r) => r.reportable && !r.hasTaxId).length,
+    rows,
+  });
 }, { admin: true });
 
 /* general to-do — admin's own list, not attached to any job */
@@ -1762,6 +1878,8 @@ setInterval(backupDb, 24 * 60 * 60 * 1000);
 const server = http.createServer(async (req, res) => {
   try {
     const urlPath = decodeURI(req.url.split('?')[0]);
+    // query string, for report date ranges and the like
+    const query = Object.fromEntries(new URLSearchParams(req.url.split('?')[1] || ''));
     if (!urlPath.startsWith('/api/')) return serveStatic(req, res, urlPath);
 
     const user = getSession(req);
@@ -1783,7 +1901,7 @@ const server = http.createServer(async (req, res) => {
         else if (r.multipart) body = { fields: {}, files: {} };
         else body = raw.length ? JSON.parse(raw.toString('utf8')) : {};
       }
-      return await r.handler(req, res, m, body, user);
+      return await r.handler(req, res, m, body, user, query);
     }
     json(res, 404, { error: 'Not found' });
   } catch (e) {

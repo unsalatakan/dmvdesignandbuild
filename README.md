@@ -67,6 +67,18 @@ Notes:
 - iPhone HEIC photos are converted in the browser before upload, and big photos are shrunk, so neither format nor size should ever block a scan.
 - Receipts are sent to Anthropic's API to be read. They are not used to train models.
 
+## Reports (admin only)
+
+Every job cost carries a **category** — Materials, Subcontractor, Labor, Permits & Fees, Equipment Rental, Tools, Fuel & Vehicle, Insurance, Office & Admin, Other. The receipt scanner picks one for you; you can change it. Three reports build on that:
+
+- **Profit & Loss** — pick a date range (or This year / Last year / This quarter). Money in against money out, broken down by category with a bar for each, then a per-job summary.
+- **Job Profitability** — every job's contract price, costs to date, profit, margin and unbilled balance. Margins under 10% show red, under 25% amber.
+- **1099s** — per contractor per tax year: total paid by check, whether they cross that year's reporting threshold, and whether you hold a tax ID for them. The threshold is applied per year (**$600** through 2025, **$2,000** from 2026 on).
+
+All three export to CSV for your accountant.
+
+**Read the caveats.** These are cash basis — money counts on the day it moved. They're management reports, not bookkeeping: there's no general ledger, balance sheet or depreciation, and the 1099 page is a worksheet that files nothing with the IRS. Totals only include what's logged here, so anything paid outside the portal is missing. Check against your bank before filing anything.
+
 ## General spending
 
 Not every cost belongs to a job — fuel, tools, office supplies. **DMV Design and Build — General** appears at the top of the job dropdown on any receipt or check line, so the delivery crew can file that spending without picking a job.

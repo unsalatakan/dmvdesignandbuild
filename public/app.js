@@ -32,6 +32,14 @@ function setRoleFlags() {
 const realJobs = (list) => list.filter((p) => !p.overhead);
 const overheadOf = (list) => list.find((p) => p.overhead) || null;
 
+const EXPENSE_CATEGORIES = ['Materials', 'Subcontractor', 'Labor', 'Permits & Fees',
+  'Equipment Rental', 'Tools', 'Fuel & Vehicle', 'Insurance', 'Office & Admin', 'Other'];
+const categoryOptions = (sel) => EXPENSE_CATEGORIES
+  .map((c) => `<option value="${c}" ${c === (sel || 'Other') ? 'selected' : ''}>${c}</option>`).join('');
+
+/* Money summed in binary floating point drifts; round every total to cents. */
+const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
 const $ = (s) => document.querySelector(s);
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -137,7 +145,7 @@ function showApp() {
   if (IS_STAFF) links.push(['#/orders', 'Orders']);          // material ordering is admin/PM work
   if (IS_CREW) links.push(['#/receipts', 'Receipts']);
   links.push(['#/photos', 'Photos']);
-  if (ME.role === 'admin') links.push(['#/contractors', 'Contractors'], ['#/customers', 'Customers'], ['#/managers', 'Managers']);
+  if (ME.role === 'admin') links.push(['#/reports', 'Reports'], ['#/contractors', 'Contractors'], ['#/customers', 'Customers'], ['#/managers', 'Managers']);
   $('#navLinks').innerHTML = links.map(([h, t]) => `<a href="${h}" data-h="${h}">${t}</a>`).join('');
   if (!location.hash || location.hash === '#/') location.hash = '#/home';
   route();
@@ -216,6 +224,7 @@ function route() {
   const contractorMatch = h.match(/^#\/contractor\/(\d+)/);
   if (contractorMatch && ME.role === 'admin') return renderContractor(Number(contractorMatch[1]));
   if (h.startsWith('#/contractors') && ME.role === 'admin') return renderContractors();
+  if (h.startsWith('#/reports') && ME.role === 'admin') return renderReports();
   if (h.startsWith('#/managers') && ME.role === 'admin') return renderManagers();
   if (h.startsWith('#/photos')) return renderPhotos();
   if (h.startsWith('#/customers') && ME.role === 'admin') return renderCustomers();
@@ -974,12 +983,13 @@ async function renderJob(id) {
       </div>
       ${invoices.length ? `
       <table class="inv-table">
-        <thead><tr><th>Date</th><th>Description</th><th>Paid To</th><th>Invoice</th><th class="right">Cost</th><th style="width:36px"></th></tr></thead>
+        <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Paid To</th><th>Invoice</th><th class="right">Cost</th><th style="width:36px"></th></tr></thead>
         <tbody>
           ${invoices.map((x) => `
           <tr>
             <td>${fmtDate(x.date)}</td>
             <td>${esc(x.desc)}</td>
+            <td><span class="cat-chip">${esc(x.category || 'Other')}</span></td>
             <td>${x.paidTo ? esc(x.paidTo) : '<span class="muted">—</span>'}</td>
             <td>${x.file
               ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}" title="Open">📄 View</a>`
@@ -988,7 +998,7 @@ async function renderJob(id) {
             <td class="right">${isAdmin ? `<button class="del" data-delinv="${x.id}" title="Delete invoice">✕</button>` : ''}</td>
           </tr>`).join('')}
           <tr class="totals-row">
-            <td colspan="4">Total cost (${invoices.length} invoice${invoices.length === 1 ? '' : 's'})</td>
+            <td colspan="5">Total cost (${invoices.length} invoice${invoices.length === 1 ? '' : 's'})</td>
             <td class="right" style="color:var(--red)">${money(invTotal)}</td><td></td>
           </tr>
         </tbody>
@@ -1001,6 +1011,7 @@ async function renderJob(id) {
           <input class="f" id="invPaidTo" list="invVendors" placeholder="Sub or supplier" />
           <datalist id="invVendors">${vendors.map((v) => `<option value="${esc(v)}"></option>`).join('')}</datalist>
         </div>
+        <div><label class="f">Category</label><select class="f" id="invCategory">${categoryOptions('Materials')}</select></div>
         <div><label class="f">Date</label><input class="f" id="invDate" type="date" value="${today}" /></div>
         <div><label class="f">Invoice PDF or Photo (optional)</label>
           <input class="f" id="invFile" type="file" accept=".pdf,image/*" />
@@ -1181,6 +1192,7 @@ async function renderJob(id) {
       if (g.desc && !$('#invDesc').value.trim()) { $('#invDesc').value = g.desc; filled.push('description'); }
       if (g.amount && !parseFloat($('#invAmount').value)) { $('#invAmount').value = g.amount.toFixed(2); filled.push('cost'); }
       if (g.vendor && !$('#invPaidTo').value.trim()) { $('#invPaidTo').value = g.vendor; filled.push('paid to'); }
+      if (g.category) { $('#invCategory').value = g.category; filled.push('category'); }
       if (g.date) { $('#invDate').value = g.date; filled.push('date'); }
       if (filled.length) {
         status.className = 'scan-status ok';
@@ -1204,6 +1216,7 @@ async function renderJob(id) {
       fd.append('desc', desc);
       fd.append('amount', amount);
       fd.append('paidTo', $('#invPaidTo').value.trim());
+      fd.append('category', $('#invCategory').value);
       fd.append('date', $('#invDate').value || '');
       const f = $('#invFile').files[0];
       if (f) fd.append('invoice', f, f.name);
@@ -1317,6 +1330,7 @@ async function renderReceipts() {
           <div class="full"><label class="f">Description</label><input class="f" data-f="desc" value="${esc(r.desc)}" placeholder="What was bought" /></div>
           <div><label class="f">Cost ($)</label><input class="f" data-f="amount" type="number" step="0.01" min="0" value="${r.amount ?? ''}" placeholder="0.00" /></div>
           <div><label class="f">Paid To</label><input class="f" data-f="paidTo" value="${esc(r.paidTo)}" placeholder="Sub or supplier" /></div>
+          <div><label class="f">Category</label><select class="f" data-f="category">${categoryOptions(r.category)}</select></div>
           <div><label class="f">Date</label><input class="f" data-f="date" type="date" value="${r.date || ''}" /></div>
           <div><label class="f">File To Job</label>
             <select class="f" data-f="job">
@@ -1337,18 +1351,19 @@ async function renderReceipts() {
     <div class="panel">
       <h3>Recent Receipts <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${filed.length} filed${filedTotal ? ', ' + money(filedTotal) : ''}</span></h3>
       <table class="filed-table">
-        <thead><tr><th>Date</th><th>What</th><th>Paid To</th><th>Job</th><th>Receipt</th><th class="right">Cost</th></tr></thead>
+        <thead><tr><th>Date</th><th>What</th><th>Category</th><th>Paid To</th><th>Job</th><th>Receipt</th><th class="right">Cost</th></tr></thead>
         <tbody>
           ${filed.slice(0, 60).map((x) => `
           <tr>
             <td>${fmtDate(x.date)}</td>
             <td>${esc(x.desc)}</td>
+            <td><span class="cat-chip">${esc(x.category || 'Other')}</span></td>
             <td>${x.paidTo ? esc(x.paidTo) : '<span class="muted">—</span>'}</td>
             <td><a href="#/job/${x.projectId}">${esc(x.projectName)}</a></td>
             <td>${x.file ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}">📄 View</a>` : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(x.amount)}</b></td>
           </tr>`).join('')}
-          ${filed.length > 60 ? `<tr><td colspan="6" class="muted">Showing the 60 most recent of ${filed.length}.</td></tr>` : ''}
+          ${filed.length > 60 ? `<tr><td colspan="7" class="muted">Showing the 60 most recent of ${filed.length}.</td></tr>` : ''}
         </tbody>
       </table>
     </div>` : ''}`;
@@ -1363,11 +1378,11 @@ async function renderReceipts() {
     const val = (f) => card.querySelector(`[data-f="${f}"]`).value;
     const note = card.querySelector(`[data-save="${id}"]`);
     card.querySelectorAll('[data-f]:not([data-f="job"])').forEach((inp) =>
-      inp.addEventListener('blur', async () => {
+      inp.addEventListener(inp.tagName === 'SELECT' ? 'change' : 'blur', async () => {
         try {
           await api('/api/receipts/' + id, {
             method: 'PUT',
-            json: { desc: val('desc'), amount: val('amount'), paidTo: val('paidTo'), date: val('date') },
+            json: { desc: val('desc'), amount: val('amount'), paidTo: val('paidTo'), date: val('date'), category: val('category') },
           });
           note.textContent = 'Saved';
           setTimeout(() => { note.textContent = ''; }, 1200);
@@ -1382,7 +1397,7 @@ async function renderReceipts() {
         // flush any unsaved edits, then file it
         await api('/api/receipts/' + id, {
           method: 'PUT',
-          json: { desc: val('desc'), amount: val('amount'), paidTo: val('paidTo'), date: val('date') },
+          json: { desc: val('desc'), amount: val('amount'), paidTo: val('paidTo'), date: val('date'), category: val('category') },
         });
         await api(`/api/receipts/${id}/assign`, { method: 'POST', json: { projectId } });
         renderReceipts();
@@ -1390,6 +1405,211 @@ async function renderReceipts() {
     });
   });
 
+}
+
+/* ---------- REPORTS (admin) ----------
+ * Cash basis throughout: money counts on the day it moved. Useful for seeing where
+ * you stand and for handing figures to an accountant — not a substitute for books. */
+let reportTab = 'pl';
+let reportFrom = '', reportTo = '', reportYear = String(new Date().getFullYear());
+
+function downloadCsv(name, rows) {
+  const esc2 = (v) => {
+    const s2 = String(v ?? '');
+    return /[",\n]/.test(s2) ? '"' + s2.replace(/"/g, '""') + '"' : s2;
+  };
+  const csv = rows.map((r) => r.map(esc2).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+async function renderReports() {
+  if (!reportFrom) {                               // default to the year so far
+    const y = new Date().getFullYear();
+    reportFrom = `${y}-01-01`; reportTo = todayISO();
+  }
+  const tab = (k, label) => `<button class="todo-tab ${reportTab === k ? 'active' : ''}" data-rtab="${k}">${label}</button>`;
+  $('#main').innerHTML = `
+    <div class="page-head">
+      <h1>Reports</h1>
+      <div class="todo-tabs">${tab('pl', 'Profit & Loss')}${tab('jobs', 'Job Profitability')}${tab('1099', '1099s')}</div>
+    </div>
+    <div id="reportBody"><div class="panel muted">Loading…</div></div>`;
+  document.querySelectorAll('[data-rtab]').forEach((b) =>
+    b.addEventListener('click', () => { reportTab = b.dataset.rtab; renderReports(); }));
+  if (reportTab === 'pl') return reportPL();
+  if (reportTab === 'jobs') return reportJobs();
+  return report1099();
+}
+
+async function reportPL() {
+  const d = await api(`/api/reports/pl?from=${reportFrom}&to=${reportTo}`);
+  const pct = (v) => (d.income ? Math.round((v / d.income) * 1000) / 10 : 0);
+  $('#reportBody').innerHTML = `
+    <div class="panel">
+      <div class="report-range">
+        <div><label class="f">From</label><input class="f" type="date" id="plFrom" value="${reportFrom}" /></div>
+        <div><label class="f">To</label><input class="f" type="date" id="plTo" value="${reportTo}" /></div>
+        <div class="report-presets">
+          <button class="btn small" data-preset="ytd">This year</button>
+          <button class="btn small" data-preset="last">Last year</button>
+          <button class="btn small" data-preset="q">This quarter</button>
+        </div>
+        <button class="btn" id="plCsv">⤓ CSV</button>
+      </div>
+    </div>
+    <div class="cards">
+      <div class="stat"><div class="num" style="color:var(--green)">${money(d.income)}</div><div class="lbl">Money In</div></div>
+      <div class="stat"><div class="num" style="color:var(--red)">${money(d.expenses)}</div><div class="lbl">Money Out</div></div>
+      <div class="stat"><div class="num" style="color:${d.net >= 0 ? 'var(--green)' : 'var(--red)'}">${money(d.net)}</div><div class="lbl">Net</div></div>
+    </div>
+    <div class="panel">
+      <h3>Where the money went</h3>
+      ${d.byCategory.length ? `
+      <table>
+        <thead><tr><th>Category</th><th class="right">Amount</th><th class="right">% of income</th><th style="width:38%"></th></tr></thead>
+        <tbody>
+          ${d.byCategory.map((c) => `
+          <tr>
+            <td><b>${esc(c.category)}</b></td>
+            <td class="right">${money(c.amount)}</td>
+            <td class="right muted">${pct(c.amount)}%</td>
+            <td><div class="bar"><span style="width:${Math.min(100, d.expenses ? (c.amount / d.expenses) * 100 : 0)}%"></span></div></td>
+          </tr>`).join('')}
+          <tr class="totals-row"><td>Total</td><td class="right" style="color:var(--red)">${money(d.expenses)}</td><td colspan="2"></td></tr>
+        </tbody>
+      </table>` : '<div class="muted">No costs recorded in this period.</div>'}
+    </div>
+    <div class="panel">
+      <h3>By job</h3>
+      ${d.byJob.length ? `
+      <table>
+        <thead><tr><th>Job</th><th class="right">Received</th><th class="right">Spent</th><th class="right">Net</th></tr></thead>
+        <tbody>
+          ${d.byJob.map((j) => `
+          <tr>
+            <td><a href="#/job/${j.id}">${esc(j.name)}</a>${j.overhead ? ' <span class="badge badge-amber">general</span>' : ''}</td>
+            <td class="right" style="color:var(--green)">${money(j.received)}</td>
+            <td class="right" style="color:var(--red)">${money(j.spent)}</td>
+            <td class="right"><b style="color:${j.net >= 0 ? 'var(--green)' : 'var(--red)'}">${money(j.net)}</b></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : '<div class="muted">Nothing moved in this period.</div>'}
+    </div>
+    <div class="muted">Cash basis — money counts on the day it moved. This is a management report, not bookkeeping.</div>`;
+
+  const reload = () => { reportFrom = $('#plFrom').value; reportTo = $('#plTo').value; renderReports(); };
+  $('#plFrom').addEventListener('change', reload);
+  $('#plTo').addEventListener('change', reload);
+  document.querySelectorAll('[data-preset]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const now = new Date(), y = now.getFullYear();
+      if (b.dataset.preset === 'ytd') { reportFrom = `${y}-01-01`; reportTo = todayISO(); }
+      if (b.dataset.preset === 'last') { reportFrom = `${y - 1}-01-01`; reportTo = `${y - 1}-12-31`; }
+      if (b.dataset.preset === 'q') {
+        const q = Math.floor(now.getMonth() / 3);
+        reportFrom = `${y}-${String(q * 3 + 1).padStart(2, '0')}-01`; reportTo = todayISO();
+      }
+      renderReports();
+    }));
+  $('#plCsv').addEventListener('click', () => downloadCsv(`profit-and-loss_${reportFrom}_to_${reportTo}.csv`, [
+    ['Profit & Loss (cash basis)', reportFrom + ' to ' + reportTo], [],
+    ['Money In', d.income], ['Money Out', d.expenses], ['Net', d.net], [],
+    ['Category', 'Amount'], ...d.byCategory.map((c) => [c.category, c.amount]), [],
+    ['Job', 'Received', 'Spent', 'Net'], ...d.byJob.map((j) => [j.name, j.received, j.spent, j.net]),
+  ]));
+}
+
+async function reportJobs() {
+  const rows = await api('/api/reports/jobs');
+  const t = (k) => cents(rows.reduce((s, r) => s + (r[k] || 0), 0));
+  $('#reportBody').innerHTML = `
+    <div class="panel">
+      <div class="report-range"><h3 style="margin:0">Lifetime, every job</h3><button class="btn" id="jobCsv">⤓ CSV</button></div>
+    </div>
+    <div class="panel">
+      ${rows.length ? `
+      <table>
+        <thead><tr><th>Job</th><th>Customer</th><th class="right">Contract</th><th class="right">Costs</th><th class="right">Profit</th><th class="right">Margin</th><th class="right">Unbilled</th></tr></thead>
+        <tbody>
+          ${rows.map((r) => `
+          <tr>
+            <td><a href="#/job/${r.id}">${esc(r.name)}</a></td>
+            <td>${r.customerName ? esc(r.customerName) : '<span class="muted">—</span>'}</td>
+            <td class="right">${money(r.price)}</td>
+            <td class="right" style="color:var(--red)">${money(r.spent)}</td>
+            <td class="right"><b style="color:${r.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${money(r.profit)}</b></td>
+            <td class="right">${r.margin === null ? '<span class="muted">—</span>' : `<span class="badge ${r.margin < 10 ? 'badge-red' : r.margin < 25 ? 'badge-amber' : ''}">${r.margin}%</span>`}</td>
+            <td class="right muted">${money(r.unbilled)}</td>
+          </tr>`).join('')}
+          <tr class="totals-row">
+            <td colspan="2">All jobs</td>
+            <td class="right">${money(t('price'))}</td>
+            <td class="right" style="color:var(--red)">${money(t('spent'))}</td>
+            <td class="right" style="color:var(--green)">${money(t('profit'))}</td>
+            <td colspan="2"></td>
+          </tr>
+        </tbody>
+      </table>` : '<div class="muted">No jobs yet.</div>'}
+    </div>
+    <div class="muted">Margin is contract price less costs. Labour you pay outside the portal is not in these numbers.</div>`;
+  $('#jobCsv').addEventListener('click', () => downloadCsv('job-profitability.csv', [
+    ['Job', 'Customer', 'Contract', 'Costs', 'Profit', 'Margin %', 'Unbilled'],
+    ...rows.map((r) => [r.name, r.customerName || '', r.price, r.spent, r.profit, r.margin ?? '', r.unbilled]),
+  ]));
+}
+
+async function report1099() {
+  const d = await api(`/api/reports/1099?year=${reportYear}`);
+  const years = [];
+  for (let y = new Date().getFullYear(); y >= new Date().getFullYear() - 5; y--) years.push(String(y));
+  $('#reportBody').innerHTML = `
+    <div class="panel">
+      <div class="report-range">
+        <div><label class="f">Tax year</label>
+          <select class="f" id="yr">${years.map((y) => `<option ${y === reportYear ? 'selected' : ''}>${y}</option>`).join('')}</select>
+        </div>
+        <div class="muted">Reporting threshold for ${d.year}: <b>${money(d.threshold)}</b></div>
+        <button class="btn" id="csv1099">⤓ CSV</button>
+      </div>
+    </div>
+    ${d.missingTaxId ? `<div class="check-todo">⚠️ ${d.missingTaxId} contractor${d.missingTaxId === 1 ? '' : 's'} over the threshold ${d.missingTaxId === 1 ? 'has' : 'have'} no tax ID on file — you need a W-9 before you can file.</div>` : ''}
+    <div class="cards">
+      <div class="stat"><div class="num">${d.reportableCount}</div><div class="lbl">Need a 1099</div></div>
+      <div class="stat"><div class="num">${money(d.totalPaid)}</div><div class="lbl">Paid to contractors</div></div>
+    </div>
+    <div class="panel">
+      ${d.rows.length ? `
+      <table>
+        <thead><tr><th>Contractor</th><th>Tax ID</th><th class="right">Checks</th><th class="right">Paid in ${esc(d.year)}</th><th>1099?</th></tr></thead>
+        <tbody>
+          ${d.rows.map((r) => `
+          <tr>
+            <td><a href="#/contractor/${r.id}"><b>${esc(r.name)}</b></a></td>
+            <td>${r.hasTaxId
+              ? `${r.taxIdType === 'ssn' ? '•••-••-' : '••-•••'}${esc(r.taxIdLast4)}`
+              : '<span class="badge badge-red">missing</span>'}</td>
+            <td class="right">${r.checkCount}</td>
+            <td class="right"><b>${money(r.paid)}</b></td>
+            <td>${r.reportable ? '<span class="badge badge-amber">Yes</span>' : '<span class="muted">Under threshold</span>'}</td>
+          </tr>`).join('')}
+          <tr class="totals-row"><td colspan="3">Total</td><td class="right">${money(d.totalPaid)}</td><td></td></tr>
+        </tbody>
+      </table>` : `<div class="muted">No contractor payments recorded in ${esc(d.year)}.</div>`}
+    </div>
+    <div class="muted">
+      Totals come from checks logged here, so anything paid outside the portal is missing. This is a
+      worksheet — it does not file anything with the IRS. Check the figures against your bank before filing.
+    </div>`;
+  $('#yr').addEventListener('change', (e) => { reportYear = e.target.value; renderReports(); });
+  $('#csv1099').addEventListener('click', () => downloadCsv(`1099-summary-${d.year}.csv`, [
+    [`1099-NEC worksheet ${d.year}`, `threshold ${d.threshold}`], [],
+    ['Contractor', 'ID type', 'Last 4', 'Checks', 'Paid', 'Reportable'],
+    ...d.rows.map((r) => [r.name, r.taxIdType || '', r.taxIdLast4 || '', r.checkCount, r.paid, r.reportable ? 'YES' : 'no']),
+  ]));
 }
 
 /* ---------- CHECK DETAIL (admin) ----------
