@@ -488,3 +488,19 @@ html:not(.light) .scan-status.busy { color: #48c684; }
 html:not(.light) .check-todo { background: rgba(217,148,23,0.14); border-color: rgba(217,148,23,0.4); color: #e8c583; }
 html:not(.light) .check-todo b { color: #f0b445; }
 html:not(.light) .check-todo.done { background: rgba(29,157,92,0.14); border-color: rgba(29,157,92,0.4); color: #48c684; }
+
+/* check: numbered steps + submit bar */
+.step-n { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--gold); color: #fff; font-size: 11px; font-weight: 800; margin-right: 8px; vertical-align: -3px; }
+.check-submit { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  background: var(--panel); border-radius: var(--radius); box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+  padding: 18px 20px; margin-bottom: 20px; border-left: 5px solid var(--gold); }
+html:not(.light) .check-submit { background: #16243d; border: 1px solid rgba(255,255,255,0.07); border-left: 5px solid var(--gold); color: #e9eef6; }
+.check-submit .k { font-size: 12px; text-transform: uppercase; color: var(--muted); letter-spacing: 0.5px; }
+.check-submit-amt { font-size: 24px; font-weight: 800; line-height: 1.2; }
+.check-submit-act { display: flex; gap: 10px; }
+.check-submit-act .btn { padding: 13px 22px; font-size: 15px; }
+@media (max-width: 800px) {
+  .check-submit { flex-direction: column; align-items: stretch; }
+  .check-submit-act { width: 100%; }
+  .check-submit-act .btn { flex: 1; }
+}

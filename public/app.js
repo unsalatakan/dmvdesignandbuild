@@ -1443,7 +1443,7 @@ async function renderCheck(id) {
     })()}
 
     <div class="panel">
-      <h3>Check Details</h3>
+      <h3><span class="step-n">1</span> Check Details</h3>
       <div class="form-grid">
         <div><label class="f">Check Number</label><input class="f" id="ckNum" value="${esc(k.number)}" /></div>
         <div><label class="f">Date</label><input class="f" id="ckDate" type="date" value="${k.date || ''}" /></div>
@@ -1454,12 +1454,11 @@ async function renderCheck(id) {
           </select>
           ${!k.contractorId && k.payee ? `<div class="scan-status">Read as “${esc(k.payee)}” — no contractor by that name. <button class="btn small gold" id="ckMakeCon">Create “${esc(k.payee)}”</button></div>` : ''}
         </div>
-        <div class="full" style="text-align:right"><button class="btn" id="ckSave">Save Details</button> <span class="muted" id="ckNote"></span></div>
       </div>
     </div>
 
     <div class="panel">
-      <h3>Breakdown</h3>
+      <h3><span class="step-n">2</span> Breakdown — one line per job</h3>
       ${lines.length ? `
       <table class="check-lines">
         <thead><tr><th>Job</th><th class="right">Amount</th><th style="width:36px"></th></tr></thead>
@@ -1495,6 +1494,18 @@ async function renderCheck(id) {
       <div class="muted" style="margin-top:10px">Add one line per job. Each files that amount as a cost on the job, so its profit stays right.</div>
     </div>
 
+    <div class="check-submit">
+      <div>
+        <div class="k">Check total</div>
+        <div class="check-submit-amt">${money(k.total)}</div>
+        <div class="muted" id="ckNote"></div>
+      </div>
+      <div class="check-submit-act">
+        <button class="btn" id="ckSave">Save</button>
+        <button class="btn gold" id="ckDone">✓ Save &amp; Finish</button>
+      </div>
+    </div>
+
     <div class="panel">
       <h3>Check Image</h3>
       <input type="file" id="ckPhotoFile" accept=".pdf,image/*" style="display:none" />
@@ -1507,14 +1518,40 @@ async function renderCheck(id) {
     </div>`;
 
   const note = $('#ckNote');
+  const saveHeader = () => api('/api/checks/' + id, {
+    method: 'PUT',
+    json: { number: $('#ckNum').value.trim(), date: $('#ckDate').value, contractorId: $('#ckCon').value || null },
+  });
   $('#ckSave').addEventListener('click', async () => {
+    note.textContent = 'Saving…';
+    try { await saveHeader(); renderCheck(id); }
+    catch (err) { note.textContent = err.message; }
+  });
+  /* Save & Finish: commit the header, then say plainly if anything is still
+   * outstanding rather than leaving a half-filled check lying around. */
+  $('#ckDone').addEventListener('click', async () => {
+    const btn = $('#ckDone');
+    btn.disabled = true;
+    note.textContent = 'Saving…';
     try {
-      await api('/api/checks/' + id, {
-        method: 'PUT',
-        json: { number: $('#ckNum').value.trim(), date: $('#ckDate').value, contractorId: $('#ckCon').value || null },
-      });
-      renderCheck(id);
-    } catch (err) { note.textContent = err.message; }
+      await saveHeader();
+      const fresh = await api('/api/checks/' + id);
+      const open = (fresh.lines || []).filter((l) => !l.projectId).length;
+      const missing = [];
+      if (!fresh.number) missing.push('a check number');
+      if (!fresh.contractorId) missing.push('who it was paid to');
+      if (!(fresh.lines || []).length) missing.push('at least one job line');
+      else if (open) missing.push(`a job for ${open} line${open === 1 ? '' : 's'}`);
+      if (missing.length) {
+        btn.disabled = false;
+        note.textContent = '';
+        const leave = await askConfirm(
+          `Saved. This check still needs ${missing.join(' and ')}. Leave it unfinished for now?`,
+          { ok: 'Leave for now', danger: false });
+        if (!leave) { renderCheck(id); return; }
+      }
+      location.hash = fresh.contractorId ? '#/contractor/' + fresh.contractorId : '#/contractors';
+    } catch (err) { note.textContent = err.message; btn.disabled = false; }
   });
   if ($('#ckMakeCon')) $('#ckMakeCon').addEventListener('click', () => {
     contractorModal({ name: k.payee }, async (saved) => {
@@ -1601,29 +1638,36 @@ function contractorFormHtml(c) {
     <div class="full"><label class="f">Notes</label><input class="f" name="notes" value="${esc(e.notes || '')}" placeholder="Trade, crew size, anything worth remembering" /></div>`;
 }
 
+/* `c` may be a real contractor (edit) or just a pre-filled name coming off a scanned
+ * check (create). Only an id means edit — going by truthiness alone sent a PUT to
+ * /api/contractors/undefined, which matches no route and failed. */
 function contractorModal(c, onSaved) {
+  const isEdit = !!(c && c.id);
   openModal(`
-    <h2>${c ? 'Edit Contractor' : 'Add Contractor'}</h2>
+    <h2>${isEdit ? 'Edit Contractor' : 'Add Contractor'}</h2>
+    ${!isEdit && c && c.name ? `<div class="muted" style="margin:-8px 0 14px">Read off the check as “${esc(c.name)}” — correct it if the handwriting was off.</div>` : ''}
     <form id="conForm" class="form-grid">
       ${contractorFormHtml(c)}
       <div class="modal-actions full">
         <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
-        <button type="submit" class="btn gold">${c ? 'Save Changes' : 'Add Contractor'}</button>
+        <button type="submit" class="btn gold">${isEdit ? 'Save Changes' : 'Add Contractor'}</button>
       </div>
       <div class="error full" id="conErr"></div>
     </form>`);
   $('#conForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const btn = e.target.querySelector('button[type=submit]');
     const f = Object.fromEntries(new FormData(e.target));
-    if (c && !f.taxId) delete f.taxId;           // blank means "leave what's on file"
+    if (isEdit && !f.taxId) delete f.taxId;      // blank on an edit means "keep what's on file"
+    btn.disabled = true;
     try {
-      const saved = c
+      const saved = isEdit
         ? await api('/api/contractors/' + c.id, { method: 'PUT', json: f })
         : await api('/api/contractors', { method: 'POST', json: f });
       closeModal();
       if (saved.warning) alert(saved.warning);   // saved either way — just say what didn't stick
       onSaved(saved);
-    } catch (err) { $('#conErr').textContent = err.message; }
+    } catch (err) { $('#conErr').textContent = err.message; btn.disabled = false; }
   });
 }
 
