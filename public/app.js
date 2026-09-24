@@ -32,6 +32,44 @@ function setRoleFlags() {
 const realJobs = (list) => list.filter((p) => !p.overhead);
 const overheadOf = (list) => list.find((p) => p.overhead) || null;
 
+/* ---------- pagination ----------
+ * Page state lives here so a re-render (after filing or deleting) keeps you where
+ * you were. Pages are clamped on every draw, so emptying the last page walks back
+ * rather than leaving you staring at nothing. */
+const pageState = {};
+function pageOf(key, totalItems, perPage) {
+  const pages = Math.max(1, Math.ceil(totalItems / perPage));
+  const n = Math.min(Math.max(1, pageState[key] || 1), pages);
+  pageState[key] = n;
+  return { page: n, pages, start: (n - 1) * perPage, end: n * perPage };
+}
+function pager(key, { page, pages }, noun, totalItems) {
+  if (pages <= 1) return '';
+  // a window of page numbers around the current one, so 40 pages doesn't wrap
+  const nums = [];
+  for (let i = Math.max(1, page - 2); i <= Math.min(pages, page + 2); i++) nums.push(i);
+  const btn = (p, label, on, dis) =>
+    `<button class="pg-btn ${on ? 'on' : ''}" data-pager="${key}" data-page="${p}" ${dis ? 'disabled' : ''}>${label}</button>`;
+  return `
+    <div class="pager">
+      <div class="pg-info">${totalItems} ${noun} · page ${page} of ${pages}</div>
+      <div class="pg-btns">
+        ${btn(page - 1, '‹ Prev', false, page === 1)}
+        ${nums[0] > 1 ? btn(1, '1', false, false) + (nums[0] > 2 ? '<span class="pg-gap">…</span>' : '') : ''}
+        ${nums.map((i) => btn(i, i, i === page, false)).join('')}
+        ${nums[nums.length - 1] < pages ? (nums[nums.length - 1] < pages - 1 ? '<span class="pg-gap">…</span>' : '') + btn(pages, pages, false, false) : ''}
+        ${btn(page + 1, 'Next ›', false, page === pages)}
+      </div>
+    </div>`;
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-pager]');
+  if (!b || b.disabled) return;
+  pageState[b.dataset.pager] = Number(b.dataset.page);
+  renderReceipts();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
 /* ---------- collapsible "add" sections ----------
  * Panels lead with what is already logged; the form to add another sits behind a
  * toggle. Open state is remembered per key so a redraw doesn't close it under you. */
@@ -1404,6 +1442,10 @@ async function renderReceipts() {
       .map((x) => ({ ...x, projectName: p.name, projectId: p.id })))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.id - a.id));
   const filedTotal = filed.reduce((s, x) => s + (x.amount || 0), 0);
+  const inbox = pageOf('inbox', receipts.length, 12);
+  const shown = receipts.slice(inbox.start, inbox.end);
+  const fp = pageOf('filed', filed.length, 25);
+  const filedShown = filed.slice(fp.start, fp.end);
 
   $('#main').innerHTML = `
     <div class="page-head">
@@ -1427,7 +1469,7 @@ async function renderReceipts() {
       ${receipts.length ? `<span class="muted">${money(total)} unfiled${needsAttention ? ` · ${needsAttention} need a cost` : ''}</span>` : ''}
     </div>
 
-    ${receipts.length ? `<div class="receipt-grid">${receipts.map((r) => `
+    ${receipts.length ? `<div class="receipt-grid">${shown.map((r) => `
       <div class="panel receipt-card" data-rc="${r.id}">
         <div class="receipt-head">
           <a class="mini-chip" href="#" data-file-view="${r.file}" data-file-name="${esc(r.fileName || '')}">📄 View receipt</a>
@@ -1455,7 +1497,8 @@ async function renderReceipts() {
           </div>
         </div>
         <div class="muted receipt-meta">Added ${fmtDate(String(r.uploaded).slice(0, 10))}${r.by ? ' by ' + esc(r.by) : ''}</div>
-      </div>`).join('')}</div>`
+      </div>`).join('')}</div>
+      ${pager('inbox', inbox, 'waiting', receipts.length)}`
     : '<div class="panel muted">Nothing waiting. Upload a receipt above and it will show up here ready to file.</div>'}
 
     ${filed.length ? `
@@ -1464,7 +1507,7 @@ async function renderReceipts() {
       <table class="filed-table">
         <thead><tr><th>Date</th><th>What</th><th>Category</th><th>Paid To</th><th>Job</th><th>Receipt</th><th class="right">Cost</th></tr></thead>
         <tbody>
-          ${filed.slice(0, 60).map((x) => `
+          ${filedShown.map((x) => `
           <tr>
             <td>${fmtDate(x.date)}</td>
             <td>${esc(x.desc)}</td>
@@ -1474,9 +1517,9 @@ async function renderReceipts() {
             <td>${x.file ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}">📄 View</a>` : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(x.amount)}</b></td>
           </tr>`).join('')}
-          ${filed.length > 60 ? `<tr><td colspan="7" class="muted">Showing the 60 most recent of ${filed.length}.</td></tr>` : ''}
         </tbody>
       </table>
+      ${pager('filed', fp, 'filed', filed.length)}
     </div>` : ''}`;
 
   wirePhotoUploader(null, () => renderReceipts(), {

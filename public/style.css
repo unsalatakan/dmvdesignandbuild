@@ -538,3 +538,18 @@ html:not(.light) .add-toggle { color: #48c684; }
 .add-toggle.open .chev { transform: rotate(90deg); }
 .add-toggle:hover { opacity: 0.8; }
 .add-body { padding-top: 10px; }
+
+/* pagination */
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-top: 16px; }
+.pg-info { font-size: 12.5px; color: var(--muted); }
+.pg-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.pg-btn { min-width: 40px; height: 40px; padding: 0 12px; border: 1px solid rgba(128,128,128,0.32); background: transparent;
+  color: inherit; border-radius: 8px; font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.pg-btn:hover:not(:disabled) { background: rgba(128,128,128,0.14); }
+.pg-btn.on { background: var(--gold); border-color: var(--gold); color: #fff; }
+.pg-btn:disabled { opacity: 0.38; cursor: default; }
+.pg-gap { color: var(--muted); align-self: center; padding: 0 2px; }
+@media (max-width: 800px) {
+  .pager { justify-content: center; }
+  .pg-info { width: 100%; text-align: center; }
+}
