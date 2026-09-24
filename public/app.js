@@ -32,6 +32,46 @@ function setRoleFlags() {
 const realJobs = (list) => list.filter((p) => !p.overhead);
 const overheadOf = (list) => list.find((p) => p.overhead) || null;
 
+/* ---------- collapsible "add" sections ----------
+ * Panels lead with what is already logged; the form to add another sits behind a
+ * toggle. Open state is remembered per key so a redraw doesn't close it under you. */
+const addOpen = {};
+function addSection(key, label, inner) {
+  const open = !!addOpen[key];
+  return `
+    <div class="add-wrap">
+      <button type="button" class="add-toggle ${open ? 'open' : ''}" data-add="${key}">
+        <span class="chev">›</span> ${esc(label)}
+      </button>
+      <div class="add-body ${open ? '' : 'hidden'}" data-addbody="${key}">${inner}</div>
+    </div>`;
+}
+/* Bound once at document level, so it survives every re-render. */
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-add]');
+  if (!t) return;
+  const key = t.dataset.add;
+  const body = document.querySelector(`[data-addbody="${key}"]`);
+  if (!body) return;
+  addOpen[key] = body.classList.toggle('hidden') === false;
+  t.classList.toggle('open', addOpen[key]);
+  if (addOpen[key]) {
+    const first = body.querySelector('input:not([type=file]), select, textarea');
+    if (first) first.focus();
+  }
+});
+
+/* A glyph and a human size for a document row. */
+function docIcon(name) {
+  const e = String(name || '').toLowerCase();
+  if (/\.pdf$/.test(e)) return '📄';
+  if (/\.(xlsx?|csv)$/.test(e)) return '📊';
+  if (/\.docx?$/.test(e)) return '📝';
+  if (/\.(png|jpe?g|gif|webp|heic|heif)$/.test(e)) return '🖼️';
+  return '📎';
+}
+const fileSize = (b) => (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
+
 const EXPENSE_CATEGORIES = ['Materials', 'Subcontractor', 'Labor', 'Permits & Fees',
   'Equipment Rental', 'Tools', 'Fuel & Vehicle', 'Insurance', 'Office & Admin', 'Other'];
 const categoryOptions = (sel) => EXPENSE_CATEGORIES
@@ -849,6 +889,8 @@ async function renderJob(id) {
   const invTotal = invoices.reduce((s, x) => s + (x.amount || 0), 0);
   const profit = (p.price || 0) - invTotal;
   const vendors = [...new Set(invoices.map((x) => x.paidTo).filter(Boolean))].sort();
+  const isCustomer = ME.role === 'customer';
+  const docs = (p.docs || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
 
   $('#main').innerHTML = `
     <div class="page-head">
@@ -898,6 +940,37 @@ async function renderJob(id) {
     </div>` : ''}
 
     <div class="panel">
+      <h3>Documents${docs.length ? ` <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${docs.length}</span>` : ''}</h3>
+      ${IS_CREW ? addSection('doc', 'Upload documents', `
+      <div>
+        <input type="file" id="docFile" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,image/*" style="display:none" />
+        <button class="btn gold" id="docUpBtn">⬆ Choose Files</button>
+        <span class="muted"> Permits, inspections, warranties, anything else. Several at once is fine.</span>
+        <div class="scan-status" id="docStatus"></div>
+      </div>`) : ''}
+      ${docs.length ? `
+      <table class="doc-table">
+        <thead><tr><th>Document</th><th>Added</th>${isCustomer ? '' : '<th>Customer can see</th>'}<th style="width:36px"></th></tr></thead>
+        <tbody>
+          ${docs.map((d) => `
+          <tr>
+            <td>
+              <a href="#" data-file-view="${d.file}" data-file-name="${esc(d.fileName)}" class="doc-name">${docIcon(d.fileName)} ${esc(d.label)}</a>
+              <div class="doc-sub">${esc(d.fileName)}${d.size ? ' · ' + fileSize(d.size) : ''}</div>
+            </td>
+            <td class="muted">${fmtDate(String(d.uploaded).slice(0, 10))}${d.by ? '<div class="doc-sub">by ' + esc(d.by) + '</div>' : ''}</td>
+            ${isCustomer ? '' : `<td>
+              ${IS_CREW
+                ? `<label class="doc-share"><input type="checkbox" data-docshare="${d.id}" ${d.shared ? 'checked' : ''} /> <span>${d.shared ? 'Shared' : 'Internal'}</span></label>`
+                : (d.shared ? '<span class="badge">Shared</span>' : '<span class="cat-chip">Internal</span>')}
+            </td>`}
+            <td class="right">${IS_CREW ? `<button class="del" data-deldoc="${d.id}" title="Delete document">✕</button>` : ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : `<div class="muted">${IS_CREW ? 'No documents yet. Upload permits, inspection reports, warranties — anything that belongs to this job.' : 'No documents shared yet.'}</div>`}
+    </div>
+
+    <div class="panel">
       <h3><a class="photo-job-link" href="#/job/${p.id}/photos">Photos${(p.photos || []).length ? ' (' + p.photos.length + ')' : ''} ›</a></h3>
       ${IS_CREW ? `
       <div style="margin-bottom:14px">${photoUploaderHtml()}</div>` : ''}
@@ -934,14 +1007,15 @@ async function renderJob(id) {
           </tr>`).join('')}
           ${owed ? `<tr class="totals-row"><td colspan="2">Still due</td><td class="right" style="color:var(--red)">${money(owed)}</td><td colspan="2"></td></tr>` : ''}
         </tbody>
-      </table>` : '<div class="muted">No payments scheduled yet. Add one below to start tracking what is owed and when.</div>'}
-      <div class="form-grid" style="margin-top:16px">
+      </table>` : '<div class="muted">No payments scheduled yet.</div>'}
+      ${addSection('due', 'Schedule another payment', `
+      <div class="form-grid">
         <div><label class="f">What For (e.g. Deposit, Draw 2, Final)</label><input class="f" id="dueLabel" placeholder="Payment" /></div>
         <div><label class="f">Amount ($)</label><input class="f" id="dueAmount" type="number" step="0.01" min="0" placeholder="0.00" /></div>
         <div><label class="f">Due Date</label><input class="f" id="dueDate" type="date" /></div>
         <div style="display:flex;align-items:flex-end;justify-content:flex-end"><button class="btn gold" id="dueAddBtn">+ Schedule Payment</button></div>
         <div class="error full" id="dueErr"></div>
-      </div>
+      </div>`)}
     </div>` : ''}
 
     ${isAdmin && !p.overhead ? `
@@ -966,12 +1040,13 @@ async function renderJob(id) {
           <tr class="totals-row"><td colspan="2">Total received (${pays.length} payment${pays.length === 1 ? '' : 's'})</td><td class="right" style="color:var(--green)">${money(paid)}</td><td></td></tr>
         </tbody>
       </table>` : '<div class="muted">No payments recorded yet.</div>'}
-      <div class="form-grid" style="margin-top:16px">
+      ${addSection('pay', 'Record a payment received', `
+      <div class="form-grid">
         <div><label class="f">Amount ($)</label><input class="f" id="payAmount" type="number" step="0.01" min="0" placeholder="0.00" /></div>
         <div><label class="f">Date Received</label><input class="f" id="payDate" type="date" value="${today}" /></div>
         <div class="full"><label class="f">What For (e.g. deposit, framing complete)</label><input class="f" id="payNote" placeholder="Optional" /></div>
         <div class="full" style="text-align:right"><button class="btn gold" id="payAddBtn">+ Add Payment</button></div>
-      </div>
+      </div>`)}
     </div>` : ''}
 
     <div class="panel">
@@ -1002,9 +1077,9 @@ async function renderJob(id) {
             <td class="right" style="color:var(--red)">${money(invTotal)}</td><td></td>
           </tr>
         </tbody>
-      </table>` : `<div class="muted">No costs recorded on this job yet.${isAdmin ? ' Add one below to start tracking what it is costing you.' : ''}</div>`}
-      ${isAdmin ? `
-      <div class="form-grid" style="margin-top:16px">
+      </table>` : `<div class="muted">No costs recorded on this job yet.${isAdmin ? ' Use “Add a cost” below to start tracking what it is costing you.' : ''}</div>`}
+      ${isAdmin ? addSection('inv', 'Add a cost', `
+      <div class="form-grid">
         <div class="full"><label class="f">Description *</label><input class="f" id="invDesc" placeholder="e.g. Electrical rough-in" /></div>
         <div><label class="f">Cost ($) *</label><input class="f" id="invAmount" type="number" step="0.01" min="0" placeholder="0.00" /></div>
         <div><label class="f">Paid To</label>
@@ -1019,7 +1094,7 @@ async function renderJob(id) {
         </div>
         <div class="full" style="text-align:right"><button class="btn gold" id="invAddBtn">+ Add Invoice</button></div>
         <div class="error full" id="invErr"></div>
-      </div>` : ''}
+      </div>`) : ''}
     </div>
 
     ${isAdmin && !p.overhead ? `
@@ -1101,6 +1176,42 @@ async function renderJob(id) {
     };
     capRows();
     window.addEventListener('resize', capRows);
+  }
+
+  // documents — upload, rename-by-share-toggle, delete
+  if (IS_CREW && $('#docUpBtn')) {
+    const st = $('#docStatus');
+    $('#docUpBtn').addEventListener('click', () => $('#docFile').click());
+    $('#docFile').addEventListener('change', async (e) => {
+      const files = [...e.target.files];
+      e.target.value = '';
+      if (!files.length) return;
+      const btn = $('#docUpBtn');
+      btn.disabled = true;
+      st.className = 'scan-status busy';
+      st.innerHTML = `<span class="spin"></span> Uploading ${files.length} file${files.length === 1 ? '' : 's'}…`;
+      try {
+        const fd = new FormData();
+        files.forEach((f, i) => fd.append('doc' + i, f, f.name));
+        await api(`/api/projects/${id}/docs`, { method: 'POST', body: fd });
+        renderJob(id);
+      } catch (err) { st.className = 'scan-status'; st.textContent = err.message; btn.disabled = false; }
+    });
+    document.querySelectorAll('[data-docshare]').forEach((cb) =>
+      cb.addEventListener('change', async () => {
+        try {
+          await api(`/api/projects/${id}/docs/${cb.dataset.docshare}`, { method: 'PUT', json: { shared: cb.checked } });
+          cb.nextElementSibling.textContent = cb.checked ? 'Shared' : 'Internal';
+        } catch (err) { cb.checked = !cb.checked; alert(err.message); }
+      })
+    );
+    document.querySelectorAll('[data-deldoc]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        if (!await askConfirm('Delete this document? The file is removed too.')) return;
+        await api(`/api/projects/${id}/docs/${b.dataset.deldoc}`, { method: 'DELETE' });
+        renderJob(id);
+      })
+    );
   }
 
   // photos are crew work — the delivery guy adds and removes them too

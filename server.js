@@ -152,7 +152,7 @@ function loadDb() {
       address: '', lockbox: null, price: 0, startDate: null, status: 'active',
       customerId: null, pmId: null, lat: null, lng: null,
       contractFile: null, contractName: null, planFile: null, planName: null,
-      materialFileName: null, materials: [], notes: [], payments: [], dues: [], invoices: [], photos: [],
+      materialFileName: null, materials: [], notes: [], payments: [], dues: [], invoices: [], docs: [], photos: [],
       created: new Date().toISOString(),
     });
     saveDb();
@@ -574,7 +574,11 @@ function projectOut(p, user) {
   const base = { ...p, customerName: customer ? customer.name : null, pmName: pm ? pm.name : null };
   // customers see the contract price and nothing else money-related:
   // no material costs, no internal notes, no receipts, no payment schedule
-  if (user.role === 'customer') { const { materials, notes, payments, dues, invoices, ...rest } = base; return rest; }
+  if (user.role === 'customer') {
+    const { materials, notes, payments, dues, invoices, ...rest } = base;
+    rest.docs = (base.docs || []).filter((d) => d.shared);   // internal documents stay internal
+    return rest;
+  }
   // delivery sees where the job is and what it has cost — not what it sells for,
   // not what has been paid in, and not the material order list
   if (user.role === 'delivery') {
@@ -758,7 +762,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     contractName: files.contract ? files.contract.originalname : null,
     planFile: files.plan ? files.plan.filename : null,
     planName: files.plan ? files.plan.originalname : null,
-    materialFileName: null, materials: [], notes: [], payments: [], dues: [], invoices: [], photos: [],
+    materialFileName: null, materials: [], notes: [], payments: [], dues: [], invoices: [], docs: [], photos: [],
     created: new Date().toISOString(),
   };
   db.projects.push(p); saveDb();
@@ -1005,6 +1009,65 @@ route('DELETE', /^\/api\/projects\/(\d+)\/invoices\/(\d+)$/, async (req, res, m,
   p.invoices = (p.invoices || []).filter((x) => x.id !== Number(m[2]));
   saveDb(); json(res, 200, { ok: true });
 }, { staff: true });
+
+/* ---- job documents ----
+ * Anything else that belongs to a job: permits, inspection reports, warranties,
+ * change orders, correspondence. Each one is internal by default; flip `shared` to
+ * let the customer see it on their own view of the job. */
+const DOC_FILE_RE = /\.(pdf|png|jpe?g|gif|webp|heic|heif|xlsx?|docx?|csv|txt)$/i;
+
+route('POST', /^\/api\/projects\/(\d+)\/docs$/, async (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const files = Object.keys(body.files || {})
+    .filter((k) => k.startsWith('doc'))
+    .map((k) => body.files[k]);
+  if (!files.length) return json(res, 400, { error: 'No file uploaded' });
+  const bad = files.find((f) => !DOC_FILE_RE.test(f.originalname));
+  if (bad) return json(res, 400, { error: `“${bad.originalname}” isn't a document type we accept` });
+  p.docs = p.docs || [];
+  const added = [];
+  for (const f of files) {
+    await storeFile(f);
+    const doc = {
+      id: nextId(),
+      file: f.filename, fileName: f.originalname,
+      label: String(body.fields.label || '').trim() || f.originalname.replace(/\.[^.]+$/, ''),
+      size: f.buffer.length,
+      shared: body.fields.shared === 'true' || body.fields.shared === '1',
+      uploaded: new Date().toISOString(), by: user.name,
+    };
+    p.docs.push(doc); added.push(doc);
+  }
+  saveDb();
+  if (added.some((d) => d.shared)) {
+    notifyCustomer(p, 'doc', 'New documents were added to your project "' + p.name + '".');
+  }
+  json(res, 200, added);
+}, { crew: true, multipart: true });
+
+route('PUT', /^\/api\/projects\/(\d+)\/docs\/(\d+)$/, (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const doc = (p.docs || []).find((x) => x.id === Number(m[2]));
+  if (!doc) return json(res, 404, { error: 'Document not found' });
+  if (body.label !== undefined) doc.label = String(body.label).trim() || doc.fileName;
+  if (body.shared !== undefined) {
+    const nowShared = !!body.shared;
+    if (nowShared && !doc.shared) notifyCustomer(p, 'doc', 'A document was shared with you on "' + p.name + '".');
+    doc.shared = nowShared;
+  }
+  saveDb(); json(res, 200, doc);
+}, { crew: true });
+
+route('DELETE', /^\/api\/projects\/(\d+)\/docs\/(\d+)$/, async (req, res, m, body, user) => {
+  const { p, error } = findProject(m[1], user);
+  if (error) return json(res, error[0], { error: error[1] });
+  const doc = (p.docs || []).find((x) => x.id === Number(m[2]));
+  if (doc && doc.file) await deleteFile(doc.file);
+  p.docs = (p.docs || []).filter((x) => x.id !== Number(m[2]));
+  saveDb(); json(res, 200, { ok: true });
+}, { crew: true });
 
 /* ---- receipt inbox ----
  * Capture receipts on site without picking a job. Each one is scanned on upload,
@@ -1822,8 +1885,12 @@ route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
   if (!inInbox) {
     const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name)
       || (p.photos || []).some((ph) => ph.file === name || ph.thumb === name)
-      || (p.invoices || []).some((iv) => iv.file === name));
+      || (p.invoices || []).some((iv) => iv.file === name)
+      || (p.docs || []).some((d) => d.file === name));
     if (!owner || !canAccess(owner, user)) return json(res, 403, { error: 'No access' });
+    // an internal document is never served to the customer, even on their own job
+    const doc = (owner.docs || []).find((d) => d.file === name);
+    if (doc && !doc.shared && user.role === 'customer') return json(res, 403, { error: 'No access' });
     // invoices are internal cost records — never served to the customer, even on their own job
     if (user.role === 'customer' && (owner.invoices || []).some((iv) => iv.file === name)) {
       return json(res, 403, { error: 'No access' });
