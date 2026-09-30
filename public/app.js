@@ -1583,7 +1583,7 @@ async function renderReceipts() {
   const filed = projects
     .flatMap((p) => (p.invoices || [])
       .filter((x) => x.receiptId || (x.file && !x.checkId))
-      .map((x) => ({ ...x, projectName: p.name, projectId: p.id })))
+      .map((x) => ({ ...x, projectName: p.name, projectId: p.id, overhead: !!p.overhead })))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)) || (b.id - a.id));
   const filedTotal = filed.reduce((s, x) => s + (x.amount || 0), 0);
   const inbox = pageOf('inbox', receipts.length, 12);
@@ -1655,7 +1655,9 @@ async function renderReceipts() {
           <tr>
             <td>${fmtDate(x.date)}</td>
             <td>${esc(x.desc)}</td>
-            <td><span class="cat-chip">${esc(x.category || 'Other')}</span></td>
+            <td>${IS_STAFF
+              ? `<select class="f cat-pick" data-filedcat="${x.id}" data-proj="${x.projectId}">${categoryOptions(x.category || 'Other', x.overhead ? OVERHEAD_CATEGORIES : EXPENSE_CATEGORIES)}</select>`
+              : `<span class="cat-chip">${esc(x.category || 'Other')}</span>`}</td>
             <td>${x.paidTo ? esc(x.paidTo) : '<span class="muted">—</span>'}</td>
             <td><a href="#/job/${x.projectId}">${esc(x.projectName)}</a></td>
             <td>${x.file ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}">📄 View</a>` : '<span class="muted">—</span>'}</td>
@@ -1665,6 +1667,22 @@ async function renderReceipts() {
       </table>
       ${pager('filed', fp, 'filed', filed.length)}
     </div>` : ''}`;
+
+  // change the category of a receipt that has already been filed to a job
+  document.querySelectorAll('[data-filedcat]').forEach((sel) => {
+    const before = sel.value;
+    sel.addEventListener('change', async () => {
+      sel.disabled = true;
+      try {
+        await api(`/api/projects/${sel.dataset.proj}/invoices/${sel.dataset.filedcat}`, {
+          method: 'PUT', json: { category: sel.value },
+        });
+        sel.classList.add('saved');
+        setTimeout(() => sel.classList.remove('saved'), 900);
+      } catch (err) { sel.value = before; alert(err.message); }
+      sel.disabled = false;
+    });
+  });
 
   wirePhotoUploader(null, () => renderReceipts(), {
     endpoint: '/api/receipts', field: 'receipt', thumbs: false, prepare: prepReceipt,
