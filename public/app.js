@@ -132,6 +132,16 @@ const categoryOptions = (sel, list = EXPENSE_CATEGORIES) => list
 const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 const $ = (s) => document.querySelector(s);
+/* Bind a handler only if the element is on the page. A panel that a given page or
+ * role doesn't render used to throw here, and every listener wired after it — filters,
+ * category pickers — silently never got attached. */
+function on(sel, ev, fn) {
+  const el = typeof sel === 'string' ? $(sel) : sel;
+  if (el) el.addEventListener(ev, fn);
+  return el;
+}
+
+
 const money = (n) => '$' + (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDate = (d) => (d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
@@ -241,7 +251,7 @@ function showApp() {
   if (!location.hash || location.hash === '#/') location.hash = '#/home';
   route();
 }
-$('#loginForm').addEventListener('submit', async (e) => {
+on('#loginForm', 'submit', async (e) => {
   e.preventDefault();
   $('#loginError').textContent = '';
   try {
@@ -249,9 +259,9 @@ $('#loginForm').addEventListener('submit', async (e) => {
     showApp();
   } catch (err) { $('#loginError').textContent = err.message; }
 });
-$('#logoutBtn').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.hash = ''; location.reload(); });
+on('#logoutBtn', 'click', async () => { await api('/api/logout', { method: 'POST' }); location.hash = ''; location.reload(); });
 
-$('#pwBtn').addEventListener('click', () => {
+on('#pwBtn', 'click', () => {
   openModal(`
     <h2>Change Password</h2>
     <form id="pwForm" class="form-grid">
@@ -264,7 +274,7 @@ $('#pwBtn').addEventListener('click', () => {
       </div>
       <div class="error full" id="pwErr"></div>
     </form>`);
-  $('#pwForm').addEventListener('submit', async (e) => {
+  on('#pwForm', 'submit', async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     if (f.next !== f.confirm) { $('#pwErr').textContent = 'New passwords do not match'; return; }
@@ -281,7 +291,7 @@ function paintThemeBtn() {
   $('#themeBtn').textContent = light ? '🌙 Dark Mode' : '☀️ Light Mode';
   $('#themeColor').setAttribute('content', light ? '#f5f7fb' : '#0a1628');
 }
-$('#themeBtn').addEventListener('click', () => {
+on('#themeBtn', 'click', () => {
   const light = document.documentElement.classList.toggle('light');
   localStorage.setItem('theme', light ? 'light' : 'dark');
   paintThemeBtn();
@@ -290,12 +300,12 @@ paintThemeBtn();
 
 /* ---------- mobile menu ---------- */
 function closeMenu() { $('#sidebar').classList.remove('open'); $('#navBack').classList.remove('show'); }
-$('#menuBtn').addEventListener('click', () => {
+on('#menuBtn', 'click', () => {
   $('#sidebar').classList.toggle('open');
   $('#navBack').classList.toggle('show', $('#sidebar').classList.contains('open'));
 });
-$('#navBack').addEventListener('click', closeMenu);
-$('#navLinks').addEventListener('click', closeMenu);
+on('#navBack', 'click', closeMenu);
+on('#navLinks', 'click', closeMenu);
 
 /* ---------- router ---------- */
 window.addEventListener('hashchange', route);
@@ -414,7 +424,7 @@ async function renderHome() {
       </div>`;
     homeMap = drawMap('homemap', projects, false);
     setTimeout(() => homeMap.invalidateSize(), 120);
-    $('#mapCard').addEventListener('click', () => openFullMap(projects));
+    on('#mapCard', 'click', () => openFullMap(projects));
     return;
   }
 
@@ -553,8 +563,8 @@ async function renderHome() {
         renderHome();
       } catch (err) { $('#gtodoErr').textContent = err.message; }
     };
-    $('#gtodoAdd').addEventListener('click', addTodo);
-    $('#gtodoText').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTodo(); });
+    on('#gtodoAdd', 'click', addTodo);
+    on('#gtodoText', 'keydown', (e) => { if (e.key === 'Enter') addTodo(); });
   }
   document.querySelectorAll('input[data-gtodo]').forEach((cb) =>
     cb.addEventListener('change', async () => {
@@ -578,7 +588,7 @@ async function renderHome() {
   );
   homeMap = drawMap('homemap', projects, false);
   setTimeout(() => homeMap.invalidateSize(), 120);
-  $('#mapCard').addEventListener('click', () => openFullMap(projects));
+  on('#mapCard', 'click', () => openFullMap(projects));
   document.querySelectorAll('[data-rview]').forEach((d) =>
     d.addEventListener('click', (e) => {
       if (e.target.closest('.photo-tag')) return;
@@ -644,7 +654,7 @@ function openFullMap(projects) {
   bigMap = drawMap('bigmap', projects, true);
   setTimeout(() => bigMap.invalidateSize(), 60);
 }
-$('#mapCloseBtn').addEventListener('click', (e) => {
+on('#mapCloseBtn', 'click', (e) => {
   e.stopPropagation();
   $('#mapFull').classList.add('hidden');
   if (bigMap) { bigMap.remove(); bigMap = null; }
@@ -764,9 +774,9 @@ async function renderJobs() {
     <div id="jobsList">${buildBody()}</div>`;
   wireLockboxCopy();
   if (isAdmin) {
-    if (ME.role === 'admin') $('#newProjBtn').addEventListener('click', () => projectModal());
+    if (ME.role === 'admin') on('#newProjBtn', 'click', () => projectModal());
     const refresh = () => { $('#jobsList').innerHTML = buildBody(); wireLockboxCopy($('#jobsList')); };
-    $('#jobsSearch').addEventListener('input', (e) => { jobsQuery = e.target.value; refresh(); });
+    on('#jobsSearch', 'input', (e) => { jobsQuery = e.target.value; refresh(); });
     document.querySelectorAll('[data-jf]').forEach((b) =>
       b.addEventListener('click', () => {
         jobsFilter = b.dataset.jf;
@@ -891,7 +901,7 @@ async function projectModal(p) {
       </div>
       <div class="error full" id="projErr"></div>
     </form>`);
-  $('#projForm').addEventListener('submit', async (e) => {
+  on('#projForm', 'submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
     const btn = e.target.querySelector('button[type=submit]');
@@ -1334,8 +1344,8 @@ async function renderJob(id) {
   // documents — upload, rename-by-share-toggle, delete
   if (IS_CREW && $('#docUpBtn')) {
     const st = $('#docStatus');
-    $('#docUpBtn').addEventListener('click', () => $('#docFile').click());
-    $('#docFile').addEventListener('change', async (e) => {
+    on('#docUpBtn', 'click', () => $('#docFile').click());
+    on('#docFile', 'change', async (e) => {
       const files = [...e.target.files];
       e.target.value = '';
       if (!files.length) return;
@@ -1382,15 +1392,15 @@ async function renderJob(id) {
 
   if (!isAdmin) return;
 
-  $('#editProjBtn').addEventListener('click', () => projectModal(p));
-  if ($('#delProjBtn')) $('#delProjBtn').addEventListener('click', async () => {
+  on('#editProjBtn', 'click', () => projectModal(p));
+  on('#delProjBtn', 'click', async () => {
     if (!await askConfirm('Delete this project? This cannot be undone.')) return;
     await api('/api/projects/' + id, { method: 'DELETE' });
     location.hash = '#/jobs';
   });
 
   // scheduled payments (what's due)
-  $('#dueAddBtn').addEventListener('click', async () => {
+  on('#dueAddBtn', 'click', async () => {
     const amount = parseFloat($('#dueAmount').value);
     if (!amount || amount <= 0) { $('#dueErr').textContent = 'Enter a valid amount.'; return; }
     try {
@@ -1418,7 +1428,7 @@ async function renderJob(id) {
   );
 
   // payments
-  $('#payAddBtn').addEventListener('click', async () => {
+  on('#payAddBtn', 'click', async () => {
     const amount = parseFloat($('#payAmount').value);
     if (!amount || amount <= 0) { alert('Enter a valid amount.'); return; }
     try {
@@ -1438,7 +1448,7 @@ async function renderJob(id) {
    * Only empty fields get filled, so anything already typed is never clobbered. The
    * suggestions are editable and the user is told to check them. If scanning isn't
    * configured or the read fails, the form just stays manual. */
-  $('#invFile').addEventListener('change', async (e) => {
+  on('#invFile', 'change', async (e) => {
     const f = e.target.files[0];
     const status = $('#invScan');
     status.className = 'scan-status';
@@ -1468,7 +1478,7 @@ async function renderJob(id) {
   });
 
   // invoices (money out)
-  $('#invAddBtn').addEventListener('click', async () => {
+  on('#invAddBtn', 'click', async () => {
     const desc = $('#invDesc').value.trim();
     const amount = parseFloat($('#invAmount').value);
     if (!desc) { $('#invErr').textContent = 'Enter a description.'; return; }
@@ -1499,7 +1509,7 @@ async function renderJob(id) {
       renderJob(id);
     })
   );
-  if ($('[data-cf-clear]')) $('[data-cf-clear]').addEventListener('click', () => {
+  on('[data-cf-clear]', 'click', () => {
     costFilter[id] = { from: '', to: '', category: '', sort: 'date-desc' };
     pageState.inv = 1;
     renderJob(id);
@@ -1528,8 +1538,8 @@ async function renderJob(id) {
   );
 
   // materials
-  $('#matUploadBtn').addEventListener('click', () => $('#matFile').click());
-  $('#matFile').addEventListener('change', async (e) => {
+  on('#matUploadBtn', 'click', () => $('#matFile').click());
+  on('#matFile', 'change', async (e) => {
     if (!e.target.files[0]) return;
     const fd = new FormData();
     fd.append('excel', e.target.files[0]);
@@ -1550,8 +1560,8 @@ async function renderJob(id) {
     await api(`/api/projects/${id}/notes`, { method: 'POST', json: { text: t } });
     renderJob(id);
   };
-  $('#noteAddBtn').addEventListener('click', addNote);
-  $('#noteInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addNote(); });
+  on('#noteAddBtn', 'click', addNote);
+  on('#noteInput', 'keydown', (e) => { if (e.key === 'Enter') addNote(); });
   document.querySelectorAll('input[data-nid]').forEach((cb) =>
     cb.addEventListener('change', async () => {
       await api(`/api/projects/${id}/notes/${cb.dataset.nid}`, { method: 'PUT', json: { done: cb.checked } });
@@ -1818,8 +1828,8 @@ async function reportPL() {
     <div class="muted">Cash basis — money counts on the day it moved. This is a management report, not bookkeeping.</div>`;
 
   const reload = () => { reportFrom = $('#plFrom').value; reportTo = $('#plTo').value; renderReports(); };
-  $('#plFrom').addEventListener('change', reload);
-  $('#plTo').addEventListener('change', reload);
+  on('#plFrom', 'change', reload);
+  on('#plTo', 'change', reload);
   document.querySelectorAll('[data-preset]').forEach((b) =>
     b.addEventListener('click', () => {
       const now = new Date(), y = now.getFullYear();
@@ -1831,7 +1841,7 @@ async function reportPL() {
       }
       renderReports();
     }));
-  $('#plCsv').addEventListener('click', () => downloadCsv(`profit-and-loss_${reportFrom}_to_${reportTo}.csv`, [
+  on('#plCsv', 'click', () => downloadCsv(`profit-and-loss_${reportFrom}_to_${reportTo}.csv`, [
     ['Profit & Loss (cash basis)', reportFrom + ' to ' + reportTo], [],
     ['Money In', d.income], ['Money Out', d.expenses], ['Net', d.net], [],
     ['Category', 'Amount'], ...d.byCategory.map((c) => [c.category, c.amount]), [],
@@ -1872,7 +1882,7 @@ async function reportJobs() {
       </table>` : '<div class="muted">No jobs yet.</div>'}
     </div>
     <div class="muted">Margin is contract price less costs. Labour you pay outside the portal is not in these numbers.</div>`;
-  $('#jobCsv').addEventListener('click', () => downloadCsv('job-profitability.csv', [
+  on('#jobCsv', 'click', () => downloadCsv('job-profitability.csv', [
     ['Job', 'Customer', 'Contract', 'Costs', 'Profit', 'Margin %', 'Unbilled'],
     ...rows.map((r) => [r.name, r.customerName || '', r.price, r.spent, r.profit, r.margin ?? '', r.unbilled]),
   ]));
@@ -1920,8 +1930,8 @@ async function report1099() {
       Totals come from checks logged here, so anything paid outside the portal is missing. This is a
       worksheet — it does not file anything with the IRS. Check the figures against your bank before filing.
     </div>`;
-  $('#yr').addEventListener('change', (e) => { reportYear = e.target.value; renderReports(); });
-  $('#csv1099').addEventListener('click', () => downloadCsv(`1099-summary-${d.year}.csv`, [
+  on('#yr', 'change', (e) => { reportYear = e.target.value; renderReports(); });
+  on('#csv1099', 'click', () => downloadCsv(`1099-summary-${d.year}.csv`, [
     [`1099-NEC worksheet ${d.year}`, `threshold ${d.threshold}`], [],
     ['Contractor', 'ID type', 'Last 4', 'Checks', 'Paid', 'Reportable'],
     ...d.rows.map((r) => [r.name, r.taxIdType || '', r.taxIdLast4 || '', r.checkCount, r.paid, r.reportable ? 'YES' : 'no']),
@@ -2058,14 +2068,14 @@ async function renderCheck(id) {
     method: 'PUT',
     json: { number: $('#ckNum').value.trim(), date: $('#ckDate').value, contractorId: $('#ckCon').value || null },
   });
-  $('#ckSave').addEventListener('click', async () => {
+  on('#ckSave', 'click', async () => {
     note.textContent = 'Saving…';
     try { await saveHeader(); renderCheck(id); }
     catch (err) { note.textContent = err.message; }
   });
   /* Save & Finish: commit the header, then say plainly if anything is still
    * outstanding rather than leaving a half-filled check lying around. */
-  $('#ckDone').addEventListener('click', async () => {
+  on('#ckDone', 'click', async () => {
     const btn = $('#ckDone');
     btn.disabled = true;
     note.textContent = 'Saving…';
@@ -2089,13 +2099,13 @@ async function renderCheck(id) {
       location.hash = fresh.contractorId ? '#/contractor/' + fresh.contractorId : '#/contractors';
     } catch (err) { note.textContent = err.message; btn.disabled = false; }
   });
-  if ($('#ckMakeCon')) $('#ckMakeCon').addEventListener('click', () => {
+  on('#ckMakeCon', 'click', () => {
     contractorModal({ name: k.payee }, async (saved) => {
       await api('/api/checks/' + id, { method: 'PUT', json: { contractorId: saved.id } });
       renderCheck(id);
     });
   });
-  $('#ckAddLine').addEventListener('click', async () => {
+  on('#ckAddLine', 'click', async () => {
     const amount = parseFloat($('#ckLineAmt').value);
     if (!amount) { $('#ckLineErr').textContent = 'Enter an amount.'; return; }
     try {
@@ -2106,8 +2116,8 @@ async function renderCheck(id) {
       renderCheck(id);
     } catch (err) { $('#ckLineErr').textContent = err.message; }
   });
-  $('#ckPhotoBtn').addEventListener('click', () => $('#ckPhotoFile').click());
-  $('#ckPhotoFile').addEventListener('change', async (e) => {
+  on('#ckPhotoBtn', 'click', () => $('#ckPhotoFile').click());
+  on('#ckPhotoFile', 'change', async (e) => {
     const f = e.target.files[0];
     e.target.value = '';
     if (!f) return;
@@ -2142,7 +2152,7 @@ async function renderCheck(id) {
       renderCheck(id);
     })
   );
-  $('#delCheckBtn').addEventListener('click', async () => {
+  on('#delCheckBtn', 'click', async () => {
     if (!await askConfirm('Delete this check? Every job cost it created is removed too.')) return;
     await api('/api/checks/' + id, { method: 'DELETE' });
     location.hash = k.contractorId ? '#/contractor/' + k.contractorId : '#/contractors';
@@ -2190,7 +2200,7 @@ function contractorModal(c, onSaved) {
       </div>
       <div class="error full" id="conErr"></div>
     </form>`);
-  $('#conForm').addEventListener('submit', async (e) => {
+  on('#conForm', 'submit', async (e) => {
     e.preventDefault();
     const btn = e.target.querySelector('button[type=submit]');
     const f = Object.fromEntries(new FormData(e.target));
@@ -2266,8 +2276,8 @@ async function renderContractors() {
       🔒 Tax IDs are encrypted before they are saved and are only shown when you tap one. Every reveal is written to the server log.
     </div>`;
 
-  $('#ckUpBtn').addEventListener('click', () => $('#ckFile').click());
-  $('#ckManBtn').addEventListener('click', () => {
+  on('#ckUpBtn', 'click', () => $('#ckFile').click());
+  on('#ckManBtn', 'click', () => {
     openModal(`
       <h2>Log a Check</h2>
       <form id="ckManForm" class="form-grid">
@@ -2286,7 +2296,7 @@ async function renderContractors() {
         </div>
         <div class="error full" id="ckManErr"></div>
       </form>`);
-    $('#ckManForm').addEventListener('submit', async (e) => {
+    on('#ckManForm', 'submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);          // multipart, just with no file attached
       try {
@@ -2296,7 +2306,7 @@ async function renderContractors() {
       } catch (err) { $('#ckManErr').textContent = err.message; }
     });
   });
-  $('#ckFile').addEventListener('change', async (e) => {
+  on('#ckFile', 'change', async (e) => {
     const f = e.target.files[0];
     e.target.value = '';
     if (!f) return;
@@ -2333,7 +2343,7 @@ async function renderContractors() {
     } finally { btn.disabled = false; }
   });
 
-  $('#newConBtn').addEventListener('click', () => contractorModal(null, () => renderContractors()));
+  on('#newConBtn', 'click', () => contractorModal(null, () => renderContractors()));
   document.querySelectorAll('[data-edcon]').forEach((b) =>
     b.addEventListener('click', async () => {
       const c = list.find((x) => x.id === Number(b.dataset.edcon));
@@ -2409,7 +2419,7 @@ async function renderContractor(id) {
         </tbody>
       </table>` : '<div class="muted">No checks on file for this contractor yet.</div>'}
     </div>`;
-  $('#edConBtn').addEventListener('click', () => contractorModal(c, () => renderContractor(id)));
+  on('#edConBtn', 'click', () => contractorModal(c, () => renderContractor(id)));
   wireTaxReveal(list);
 }
 
@@ -2439,7 +2449,7 @@ async function renderCustomers() {
           </tr>`).join('')}</tbody>
       </table>` : '<div class="muted">No customers yet. Add one so you can assign jobs to them and they can log in to follow their project.</div>'}
     </div>`;
-  $('#newCustBtn').addEventListener('click', () => {
+  on('#newCustBtn', 'click', () => {
     openModal(`
       <h2>Add Customer</h2>
       <form id="custForm" class="form-grid">
@@ -2453,7 +2463,7 @@ async function renderCustomers() {
         </div>
         <div class="error full" id="custErr"></div>
       </form>`);
-    $('#custForm').addEventListener('submit', async (e) => {
+    on('#custForm', 'submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
       try {
@@ -2593,7 +2603,7 @@ async function renderManagers() {
       </div>
     </div>`;
 
-  $('#newDelBtn').addEventListener('click', () => {
+  on('#newDelBtn', 'click', () => {
     openModal(`
       <h2>Add Delivery Login</h2>
       <form id="delForm" class="form-grid">
@@ -2606,7 +2616,7 @@ async function renderManagers() {
         </div>
         <div class="error full" id="delErr"></div>
       </form>`);
-    $('#delForm').addEventListener('submit', async (e) => {
+    on('#delForm', 'submit', async (e) => {
       e.preventDefault();
       try {
         await api('/api/delivery', { method: 'POST', json: Object.fromEntries(new FormData(e.target)) });
@@ -2630,7 +2640,7 @@ async function renderManagers() {
     })
   );
 
-  $('#newPmBtn').addEventListener('click', () => {
+  on('#newPmBtn', 'click', () => {
     openModal(`
       <h2>Add Project Manager</h2>
       <form id="pmForm" class="form-grid">
@@ -2644,7 +2654,7 @@ async function renderManagers() {
         </div>
         <div class="error full" id="pmErr"></div>
       </form>`);
-    $('#pmForm').addEventListener('submit', async (e) => {
+    on('#pmForm', 'submit', async (e) => {
       e.preventDefault();
       const fd = new FormData(e.target);
       try {
@@ -2802,8 +2812,8 @@ function wirePhotoUploader(jobId, onDone, opts = {}) {
     drawQueue();
   };
 
-  $('#photoCamBtn').addEventListener('click', () => $('#photoCam').click());
-  $('#photoPickBtn').addEventListener('click', () => $('#photoFile').click());
+  on('#photoCamBtn', 'click', () => $('#photoCam').click());
+  on('#photoPickBtn', 'click', () => $('#photoFile').click());
   // clear .value after each pick so shooting another photo still fires change
   ['#photoCam', '#photoFile'].forEach((sel) =>
     $(sel).addEventListener('change', (e) => { addFiles([...e.target.files]); e.target.value = ''; }));
@@ -2916,8 +2926,8 @@ function askConfirm(message, { ok = 'Delete', danger = true } = {}) {
       </div>`);
     let done = false;
     const finish = (v) => { if (done) return; done = true; closeModal(); resolve(v); };
-    $('#askYes').addEventListener('click', () => finish(true));
-    $('#askNo').addEventListener('click', () => finish(false));
+    on('#askYes', 'click', () => finish(true));
+    on('#askNo', 'click', () => finish(false));
     // dismissing by tapping the backdrop counts as "no"
     const back = $('#modal');
     const onBack = (e) => { if (e.target === back) { back.removeEventListener('click', onBack); finish(false); } };
@@ -2976,6 +2986,6 @@ document.addEventListener('click', (e) => {
   e.stopPropagation();
   openFile(link.dataset.fileView, link.dataset.fileName || '');
 });
-$('#modal').addEventListener('click', (e) => { if (e.target === $('#modal')) closeModal(); });
+on('#modal', 'click', (e) => { if (e.target === $('#modal')) closeModal(); });
 
 boot();
