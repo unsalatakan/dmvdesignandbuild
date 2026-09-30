@@ -994,7 +994,9 @@ route('PUT', /^\/api\/projects\/(\d+)\/invoices\/(\d+)$/, async (req, res, m, bo
   if (error) return json(res, error[0], { error: error[1] });
   const inv = (p.invoices || []).find((x) => x.id === Number(m[2]));
   if (!inv) return json(res, 404, { error: 'Invoice not found' });
-  const { fields, files } = body;
+  // accepts multipart (when replacing the file) or plain JSON (a quick field edit)
+  const fields = body.fields || body || {};
+  const files = body.files || {};
   if (fields.desc !== undefined) inv.desc = String(fields.desc).trim() || 'Invoice';
   if (fields.paidTo !== undefined) inv.paidTo = String(fields.paidTo).trim();
   if (fields.category !== undefined) inv.category = clampCategory(p, fields.category);
@@ -1978,8 +1980,13 @@ const server = http.createServer(async (req, res) => {
         const raw = await readBody(req);
         const ct = req.headers['content-type'] || '';
         if (r.multipart && ct.includes('multipart/form-data')) body = parseMultipart(raw, ct);
-        else if (r.multipart) body = { fields: {}, files: {} };
-        else body = raw.length ? JSON.parse(raw.toString('utf8')) : {};
+        else if (r.multipart) {
+          // A multipart route may also be sent plain JSON for a quick field edit —
+          // read it into `fields` rather than discarding the payload.
+          let parsed = {};
+          try { parsed = raw.length ? JSON.parse(raw.toString('utf8')) : {}; } catch { parsed = {}; }
+          body = { fields: parsed, files: {} };
+        } else body = raw.length ? JSON.parse(raw.toString('utf8')) : {};
       }
       return await r.handler(req, res, m, body, user, query);
     }

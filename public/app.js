@@ -37,6 +37,10 @@ const overheadOf = (list) => list.find((p) => p.overhead) || null;
  * you were. Pages are clamped on every draw, so emptying the last page walks back
  * rather than leaving you staring at nothing. */
 const pageState = {};
+/* Cost-table filters, kept per job so switching jobs doesn't inherit a filter. */
+const costFilter = {};
+const filterFor = (jobId) => (costFilter[jobId] = costFilter[jobId]
+  || { from: '', to: '', category: '', sort: 'date-desc' });
 function pageOf(key, totalItems, perPage) {
   const pages = Math.max(1, Math.ceil(totalItems / perPage));
   const n = Math.min(Math.max(1, pageState[key] || 1), pages);
@@ -938,13 +942,28 @@ async function renderJob(id) {
   const profit = (p.price || 0) - invTotal;
   const vendors = [...new Set(invoices.map((x) => x.paidTo).filter(Boolean))].sort();
   const cats = categoriesFor(p);
-  // spend per category, biggest first
+  const f = filterFor(id);
+  const day = (x) => String(x.date || x.created || '').slice(0, 10);
+  const shownCosts = invoices.filter((x) =>
+    (!f.from || day(x) >= f.from) &&
+    (!f.to || day(x) <= f.to) &&
+    (!f.category || (x.category || 'Other') === f.category));
+  const sorters = {
+    'date-desc': (a, b) => day(b).localeCompare(day(a)) || b.id - a.id,
+    'date-asc': (a, b) => day(a).localeCompare(day(b)) || a.id - b.id,
+    'amount-desc': (a, b) => (b.amount || 0) - (a.amount || 0),
+    'amount-asc': (a, b) => (a.amount || 0) - (b.amount || 0),
+  };
+  shownCosts.sort(sorters[f.sort] || sorters['date-desc']);
+  const shownTotal = cents(shownCosts.reduce((t, x) => t + (x.amount || 0), 0));
+  const filtered = shownCosts.length !== invoices.length;
+  // spend per category follows the filter, biggest first
   const byCat = cats.map((c) => ({
     category: c,
-    amount: cents(invoices.filter((x) => (x.category || 'Other') === c).reduce((t, x) => t + (x.amount || 0), 0)),
+    amount: cents(shownCosts.filter((x) => (x.category || 'Other') === c).reduce((t, x) => t + (x.amount || 0), 0)),
   })).filter((x) => x.amount).sort((a, b) => b.amount - a.amount);
-  const invPage = pageOf('inv', invoices.length, 20);
-  const invShown = invoices.slice(invPage.start, invPage.end);
+  const invPage = pageOf('inv', shownCosts.length, 20);
+  const invShown = shownCosts.slice(invPage.start, invPage.end);
   const isCustomer = ME.role === 'customer';
   const docs = (p.docs || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
   // newest photo first — the latest site shot is the useful preview
@@ -1000,11 +1019,6 @@ async function renderJob(id) {
     ${p.overhead && IS_CREW ? `
     <div class="panel">
       <h3>Add Receipts</h3>
-      <div class="form-grid" style="margin-bottom:14px">
-        <div><label class="f">File these under</label>
-          <select class="f" id="ovCat">${categoryOptions('Other', OVERHEAD_CATEGORIES)}</select>
-        </div>
-      </div>
       ${photoUploaderHtml({
         accept: '.pdf,image/*',
         labels: { camera: '📷 Snap Receipt', pick: '🧾 Choose Files', send: '⬆ Upload & Read All' },
@@ -1012,8 +1026,8 @@ async function renderJob(id) {
       })}
       <div class="scan-status" id="ovStatus"></div>
       <div class="muted" style="margin-top:10px">
-        Each one is read automatically and filed straight to general spending under the category above.
-        Anything the scanner can't price waits on the Receipts tab.
+        Each one is read automatically and filed straight to general spending. Set its category
+        in the list below once it lands. Anything the scanner can't price waits on the Receipts tab.
       </div>
     </div>` : ''}
 
@@ -1131,21 +1145,43 @@ async function renderJob(id) {
 
     <div class="panel">
       <h3>${p.overhead ? 'Spending' : 'Invoices &amp; Job Costs'}</h3>
+      ${invoices.length ? `
+      <div class="cost-filters">
+        <div><label class="f">From</label><input class="f" type="date" data-cf="from" value="${f.from}" /></div>
+        <div><label class="f">To</label><input class="f" type="date" data-cf="to" value="${f.to}" /></div>
+        <div><label class="f">Category</label>
+          <select class="f" data-cf="category">
+            <option value="">All categories</option>
+            ${cats.map((c) => `<option value="${c}" ${f.category === c ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+        </div>
+        <div><label class="f">Sort</label>
+          <select class="f" data-cf="sort">
+            <option value="date-desc" ${f.sort === 'date-desc' ? 'selected' : ''}>Newest first</option>
+            <option value="date-asc" ${f.sort === 'date-asc' ? 'selected' : ''}>Oldest first</option>
+            <option value="amount-desc" ${f.sort === 'amount-desc' ? 'selected' : ''}>Cost: high to low</option>
+            <option value="amount-asc" ${f.sort === 'amount-asc' ? 'selected' : ''}>Cost: low to high</option>
+          </select>
+        </div>
+        ${f.from || f.to || f.category ? '<button class="btn" data-cf-clear>Clear</button>' : ''}
+      </div>
+      ${filtered ? `<div class="filter-note">Showing ${shownCosts.length} of ${invoices.length} entries · <b>${money(shownTotal)}</b> of ${money(invTotal)}</div>` : ''}` : ''}
       ${byCat.length ? `
       <div class="cat-summary">
         ${byCat.map((c) => `
         <div class="cat-sum">
           <div class="cat-sum-n">${money(c.amount)}</div>
           <div class="cat-sum-l">${esc(c.category)}</div>
-          <div class="bar"><span style="width:${invTotal ? (c.amount / invTotal) * 100 : 0}%"></span></div>
+          <div class="bar"><span style="width:${shownTotal ? (c.amount / shownTotal) * 100 : 0}%"></span></div>
         </div>`).join('')}
       </div>` : ''}
+      ${p.overhead ? '' : `
       <div class="info-grid" style="margin-bottom:16px">
         ${IS_DELIVERY ? '' : `<div><div class="k">Contract Price</div><div class="v">${money(p.price)}</div></div>`}
         <div><div class="k">Total Invoiced</div><div class="v" style="color:var(--red)">${money(invTotal)}</div></div>
         ${IS_DELIVERY ? '' : `<div><div class="k">Profit So Far</div><div class="v" style="color:${profit >= 0 ? 'var(--green)' : 'var(--red)'}">${money(profit)}</div></div>`}
-      </div>
-      ${invoices.length ? `
+      </div>`}
+      ${shownCosts.length ? `
       <table class="inv-table">
         <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Paid To</th><th>Invoice</th><th class="right">Cost</th><th style="width:36px"></th></tr></thead>
         <tbody>
@@ -1153,7 +1189,9 @@ async function renderJob(id) {
           <tr>
             <td>${fmtDate(x.date)}</td>
             <td>${esc(x.desc)}</td>
-            <td><span class="cat-chip">${esc(x.category || 'Other')}</span></td>
+            <td>${isAdmin
+              ? `<select class="f cat-pick" data-invcat="${x.id}">${categoryOptions(x.category || 'Other', cats)}</select>`
+              : `<span class="cat-chip">${esc(x.category || 'Other')}</span>`}</td>
             <td>${x.paidTo ? esc(x.paidTo) : '<span class="muted">—</span>'}</td>
             <td>${x.file
               ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}" title="Open">📄 View</a>`
@@ -1162,12 +1200,14 @@ async function renderJob(id) {
             <td class="right">${isAdmin ? `<button class="del" data-delinv="${x.id}" title="Delete invoice">✕</button>` : ''}</td>
           </tr>`).join('')}
           <tr class="totals-row">
-            <td colspan="5">Total cost (${invoices.length} invoice${invoices.length === 1 ? '' : 's'})</td>
-            <td class="right" style="color:var(--red)">${money(invTotal)}</td><td></td>
+            <td colspan="5">${filtered ? 'Filtered total' : 'Total cost'} (${shownCosts.length} entr${shownCosts.length === 1 ? 'y' : 'ies'})</td>
+            <td class="right" style="color:var(--red)">${money(shownTotal)}</td><td></td>
           </tr>
         </tbody>
       </table>
-      ${pager('inv', invPage, 'entries', invoices.length)}` : `<div class="muted">No costs recorded on this job yet.${isAdmin ? ' Use “Add a cost” below to start tracking what it is costing you.' : ''}</div>`}
+      ${pager('inv', invPage, 'entries', shownCosts.length)}`
+      : filtered ? '<div class="muted">Nothing matches those filters.</div>'
+      : `<div class="muted">No costs recorded on this job yet.${isAdmin ? ' Use “Add a cost” below to start tracking what it is costing you.' : ''}</div>`}
       ${isAdmin ? addSection('inv', 'Add a cost', `
       <div class="form-grid">
         <div class="full"><label class="f">Description *</label><input class="f" id="invDesc" placeholder="e.g. Electrical rough-in" /></div>
@@ -1272,12 +1312,10 @@ async function renderJob(id) {
   if (p.overhead && IS_CREW && $('#photoCamBtn')) {
     wirePhotoUploader(null, async () => {
       const st = $('#ovStatus');
-      const category = ($('#ovCat') || {}).value || 'Other';
       let filed = 0, waiting = 0;
       try {
         for (const r of await api('/api/receipts')) {
           if (!r.amount) { waiting++; continue; }          // no price read — leave it in the inbox
-          await api('/api/receipts/' + r.id, { method: 'PUT', json: { category } });
           await api(`/api/receipts/${r.id}/assign`, { method: 'POST', json: { projectId: id } });
           filed++;
         }
@@ -1285,7 +1323,7 @@ async function renderJob(id) {
       if (st) {
         st.className = 'scan-status' + (filed ? ' ok' : '');
         st.innerHTML = filed
-          ? `✓ Filed ${filed} receipt${filed === 1 ? '' : 's'} under ${esc(category)}.`
+          ? `✓ Filed ${filed} receipt${filed === 1 ? '' : 's'} — set the category in the list below.`
             + (waiting ? ` ${waiting} couldn't be priced — finish ${waiting === 1 ? 'it' : 'them'} on the <a href="#/receipts">Receipts tab</a>.` : '')
           : (waiting ? `${waiting} receipt${waiting === 1 ? '' : 's'} need a cost — finish on the <a href="#/receipts">Receipts tab</a>.` : '');
       }
@@ -1453,6 +1491,34 @@ async function renderJob(id) {
       btn.disabled = false; btn.textContent = '+ Add Invoice';
     }
   });
+  // cost filters — any change resets to page 1
+  document.querySelectorAll('[data-cf]').forEach((el) =>
+    el.addEventListener('change', () => {
+      filterFor(id)[el.dataset.cf] = el.value;
+      pageState.inv = 1;
+      renderJob(id);
+    })
+  );
+  if ($('[data-cf-clear]')) $('[data-cf-clear]').addEventListener('click', () => {
+    costFilter[id] = { from: '', to: '', category: '', sort: 'date-desc' };
+    pageState.inv = 1;
+    renderJob(id);
+  });
+
+  // change a logged cost's category in place
+  document.querySelectorAll('[data-invcat]').forEach((sel) =>
+    sel.addEventListener('change', async () => {
+      const was = sel.dataset.was || '';
+      try {
+        await api(`/api/projects/${id}/invoices/${sel.dataset.invcat}`, {
+          method: 'PUT', json: { category: sel.value },
+        });
+        sel.classList.add('saved');
+        setTimeout(() => sel.classList.remove('saved'), 900);
+        renderJob(id);
+      } catch (err) { if (was) sel.value = was; alert(err.message); }
+    })
+  );
   document.querySelectorAll('[data-delinv]').forEach((b) =>
     b.addEventListener('click', async () => {
       if (!await askConfirm('Delete this invoice? The attached file is removed too.')) return;

@@ -84,6 +84,8 @@ All three export to CSV for your accountant.
 
 Not every cost belongs to a job — fuel, tools, office supplies. **DMV Design and Build — General** appears at the top of the job dropdown on any receipt or check line, so the delivery crew can file that spending without picking a job.
 
+The cost table on any job (and on general spending) filters by **date range** and **category**, and sorts by **newest / oldest** or **cost high / low**. The totals and the category summary follow the filter, so you can ask "what did I spend on Landfill in Q1" and read the answer off the page. Category is an inline dropdown on each row — change it any time after a receipt lands.
+
 Its page is spending only — no documents, no photos. It has its own categories (**Landfill, Gas, Food, Office Supply, Salary, Other**) rather than the construction ones, a spend-per-category summary across the top, and an **Add Receipts** section: pick the category, snap the receipts, and each one is read and filed straight to general spending. Anything the scanner can't price waits on the Receipts tab.
 
 It behaves like a job for costs only: no contract price, no payment schedule, no materials, and it stays out of the jobs list, the map, contract-value totals and profit figures. Admins get a **General Spending** tile on the home page that opens it. It's created automatically and can't be deleted.
