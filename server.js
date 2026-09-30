@@ -841,13 +841,26 @@ const EXPENSE_CATEGORIES = [
   'Materials', 'Subcontractor', 'Labor', 'Permits & Fees', 'Equipment Rental',
   'Tools', 'Fuel & Vehicle', 'Insurance', 'Office & Admin', 'Other',
 ];
-const cleanCategory = (v) => {
+/* The general bucket is company running costs, not job costs, so it gets its own set. */
+const OVERHEAD_CATEGORIES = ['Landfill', 'Gas', 'Food', 'Office Supply', 'Salary', 'Other'];
+const ALL_CATEGORIES = [...new Set([...EXPENSE_CATEGORIES, ...OVERHEAD_CATEGORIES])];
+const categoriesFor = (project) => (project && project.overhead ? OVERHEAD_CATEGORIES : EXPENSE_CATEGORIES);
+/* Snap a category into the set the destination actually uses, so a cost moved from
+ * a job to the general bucket doesn't keep a label that bucket never offers. */
+function clampCategory(project, v) {
+  const set = categoriesFor(project);
   const want = String(v || '').trim().toLowerCase();
-  return EXPENSE_CATEGORIES.find((c) => c.toLowerCase() === want) || 'Other';
+  return set.find((c) => c.toLowerCase() === want) || 'Other';
+}
+/* Validated against both sets, so a cost keeps its label if it moves between a job
+ * and the general bucket. The UI decides which set to offer. */
+const cleanCategory = (v, fallback = 'Other') => {
+  const want = String(v || '').trim().toLowerCase();
+  return ALL_CATEGORIES.find((c) => c.toLowerCase() === want) || fallback;
 };
 
 route('GET', /^\/api\/expense-categories$/, (req, res) => {
-  json(res, 200, EXPENSE_CATEGORIES);
+  json(res, 200, { job: EXPENSE_CATEGORIES, overhead: OVERHEAD_CATEGORIES });
 }, { crew: true });
 
 /* ---- receipt scanning ----
@@ -865,7 +878,7 @@ const SCAN_PROMPT = 'This is a receipt or supplier invoice for a construction jo
   + '"amount" (the grand total actually charged, as a plain number with no currency symbol or commas), '
   + '"date" (the transaction date as YYYY-MM-DD), '
   + '"desc" (a short description of what was bought, 6 words or fewer), '
-  + '"category" (exactly one of: ' + EXPENSE_CATEGORIES.join(', ') + '). '
+  + '"category" (exactly one of: ' + ALL_CATEGORIES.join(', ') + '). '
   + 'Use null for any field you cannot read with confidence. Never guess at the amount.';
 
 /* Reads one receipt. Returns the parsed fields, or throws with a message fit to show. */
@@ -966,7 +979,7 @@ route('POST', /^\/api\/projects\/(\d+)\/invoices$/, async (req, res, m, body, us
     id: nextId(),
     desc: String(fields.desc || '').trim() || 'Invoice',
     paidTo: String(fields.paidTo || '').trim(),
-    category: cleanCategory(fields.category),
+    category: clampCategory(p, fields.category),
     amount,
     date: fields.date || new Date().toISOString().slice(0, 10),
     file: f ? f.filename : null,
@@ -984,7 +997,7 @@ route('PUT', /^\/api\/projects\/(\d+)\/invoices\/(\d+)$/, async (req, res, m, bo
   const { fields, files } = body;
   if (fields.desc !== undefined) inv.desc = String(fields.desc).trim() || 'Invoice';
   if (fields.paidTo !== undefined) inv.paidTo = String(fields.paidTo).trim();
-  if (fields.category !== undefined) inv.category = cleanCategory(fields.category);
+  if (fields.category !== undefined) inv.category = clampCategory(p, fields.category);
   if (fields.date !== undefined) inv.date = fields.date || inv.date;
   if (fields.amount !== undefined) {
     const amount = Number(fields.amount);
@@ -1158,7 +1171,7 @@ route('POST', /^\/api\/receipts\/(\d+)\/assign$/, (req, res, m, body, user) => {
     id: nextId(),
     desc: r.desc || 'Receipt',
     paidTo: r.paidTo || '',
-    category: cleanCategory(r.category),
+    category: clampCategory(p, r.category),
     amount: r.amount,
     date: r.date,
     file: r.file, fileName: r.fileName,
@@ -1381,12 +1394,12 @@ function matchProjectForLine(text) {
 
 /* Build the job-cost entry a check line creates. Description is just the check
  * reference — the job and amount carry the meaning. */
-function invoiceForLine(k, line, contractorName) {
+function invoiceForLine(k, line, contractorName, targetProject) {
   return {
     id: nextId(),
     desc: k.number ? 'Check #' + k.number : 'Check payment',
     paidTo: contractorName || k.payee || '',
-    category: cleanCategory(line.category || 'Subcontractor'),
+    category: clampCategory(targetProject, line.category || 'Subcontractor'),
     amount: line.amount,
     date: k.date,
     file: k.file, fileName: k.fileName,
@@ -1456,7 +1469,7 @@ route('POST', /^\/api\/checks$/, async (req, res, m, body, user) => {
     if (!line.amount) continue;
     const p = matchProjectForLine(line.readAs);
     if (!p) continue;
-    const inv = invoiceForLine(k, line, hit ? hit.name : null);
+    const inv = invoiceForLine(k, line, hit ? hit.name : null, p);
     p.invoices = p.invoices || [];
     p.invoices.push(inv);
     line.projectId = p.id; line.invoiceId = inv.id; line.auto = true;
@@ -1516,7 +1529,7 @@ route('POST', /^\/api\/checks\/(\d+)\/lines$/, (req, res, m, body) => {
     const p = db.projects.find((x) => x.id === Number(body.projectId));
     if (!p) return json(res, 404, { error: 'Project not found' });
     const c = (db.contractors || []).find((x) => x.id === k.contractorId);
-    const inv = invoiceForLine(k, line, c ? c.name : null);
+    const inv = invoiceForLine(k, line, c ? c.name : null, p);
     p.invoices = p.invoices || [];
     p.invoices.push(inv);
     line.projectId = p.id; line.invoiceId = inv.id;
@@ -1571,7 +1584,7 @@ route('PUT', /^\/api\/checks\/(\d+)\/lines\/(\d+)$/, (req, res, m, body) => {
         if (!p) return json(res, 404, { error: 'Project not found' });
         if (!line.amount) return json(res, 400, { error: 'Enter the amount before assigning this line to a job' });
         const c = (db.contractors || []).find((x) => x.id === k.contractorId);
-        const inv = invoiceForLine(k, line, c ? c.name : null);
+        const inv = invoiceForLine(k, line, c ? c.name : null, p);
         p.invoices = p.invoices || [];
         p.invoices.push(inv);
         line.projectId = p.id; line.invoiceId = inv.id; line.auto = false;   // a human chose this one

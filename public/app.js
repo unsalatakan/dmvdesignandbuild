@@ -62,12 +62,18 @@ function pager(key, { page, pages }, noun, totalItems) {
       </div>
     </div>`;
 }
+/* Each view registers how to redraw itself, so one pager serves them all. */
+let pagerRedraw = () => {};
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-pager]');
   if (!b || b.disabled) return;
   pageState[b.dataset.pager] = Number(b.dataset.page);
-  renderReceipts();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  const anchor = b.closest('.panel, .receipt-grid');
+  pagerRedraw();
+  if (anchor) setTimeout(() => {
+    const again = document.querySelector(`[data-pager="${b.dataset.pager}"]`);
+    if (again) again.closest('.panel, .receipt-grid')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, 0);
 });
 
 /* ---------- collapsible "add" sections ----------
@@ -112,8 +118,11 @@ const fileSize = (b) => (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.m
 
 const EXPENSE_CATEGORIES = ['Materials', 'Subcontractor', 'Labor', 'Permits & Fees',
   'Equipment Rental', 'Tools', 'Fuel & Vehicle', 'Insurance', 'Office & Admin', 'Other'];
-const categoryOptions = (sel) => EXPENSE_CATEGORIES
-  .map((c) => `<option value="${c}" ${c === (sel || 'Other') ? 'selected' : ''}>${c}</option>`).join('');
+/* The general bucket tracks company running costs, so it uses its own set. */
+const OVERHEAD_CATEGORIES = ['Landfill', 'Gas', 'Food', 'Office Supply', 'Salary', 'Other'];
+const categoriesFor = (p) => (p && p.overhead ? OVERHEAD_CATEGORIES : EXPENSE_CATEGORIES);
+const categoryOptions = (sel, list = EXPENSE_CATEGORIES) => list
+  .map((c) => `<option value="${c}" ${c === sel ? 'selected' : ''}>${c}</option>`).join('');
 
 /* Money summed in binary floating point drifts; round every total to cents. */
 const cents = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -894,6 +903,7 @@ async function projectModal(p) {
 
 /* ---------- JOB DETAIL ---------- */
 async function renderJob(id) {
+  pagerRedraw = () => renderJob(id);
   let p;
   try { p = await api('/api/projects/' + id); }
   catch { $('#main').innerHTML = '<div class="panel">Job not found.</div>'; return; }
@@ -927,8 +937,18 @@ async function renderJob(id) {
   const invTotal = invoices.reduce((s, x) => s + (x.amount || 0), 0);
   const profit = (p.price || 0) - invTotal;
   const vendors = [...new Set(invoices.map((x) => x.paidTo).filter(Boolean))].sort();
+  const cats = categoriesFor(p);
+  // spend per category, biggest first
+  const byCat = cats.map((c) => ({
+    category: c,
+    amount: cents(invoices.filter((x) => (x.category || 'Other') === c).reduce((t, x) => t + (x.amount || 0), 0)),
+  })).filter((x) => x.amount).sort((a, b) => b.amount - a.amount);
+  const invPage = pageOf('inv', invoices.length, 20);
+  const invShown = invoices.slice(invPage.start, invPage.end);
   const isCustomer = ME.role === 'customer';
   const docs = (p.docs || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
+  // newest photo first — the latest site shot is the useful preview
+  const photos = (p.photos || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
 
   $('#main').innerHTML = `
     <div class="page-head">
@@ -977,6 +997,27 @@ async function renderJob(id) {
       <div id="jobmap"></div>
     </div>` : ''}
 
+    ${p.overhead && IS_CREW ? `
+    <div class="panel">
+      <h3>Add Receipts</h3>
+      <div class="form-grid" style="margin-bottom:14px">
+        <div><label class="f">File these under</label>
+          <select class="f" id="ovCat">${categoryOptions('Other', OVERHEAD_CATEGORIES)}</select>
+        </div>
+      </div>
+      ${photoUploaderHtml({
+        accept: '.pdf,image/*',
+        labels: { camera: '📷 Snap Receipt', pick: '🧾 Choose Files', send: '⬆ Upload & Read All' },
+        hint: 'Keep tapping <b>Snap Receipt</b> to add more — nothing uploads until you tap Upload.',
+      })}
+      <div class="scan-status" id="ovStatus"></div>
+      <div class="muted" style="margin-top:10px">
+        Each one is read automatically and filed straight to general spending under the category above.
+        Anything the scanner can't price waits on the Receipts tab.
+      </div>
+    </div>` : ''}
+
+    ${p.overhead ? '' : `
     <div class="panel">
       <h3>Documents${docs.length ? ` <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${docs.length}</span>` : ''}</h3>
       ${IS_CREW ? addSection('doc', 'Upload documents', `
@@ -1006,22 +1047,23 @@ async function renderJob(id) {
           </tr>`).join('')}
         </tbody>
       </table>` : `<div class="muted">${IS_CREW ? 'No documents yet. Upload permits, inspection reports, warranties — anything that belongs to this job.' : 'No documents shared yet.'}</div>`}
-    </div>
+    </div>`}
 
+    ${p.overhead ? '' : `
     <div class="panel">
       <h3><a class="photo-job-link" href="#/job/${p.id}/photos">Photos${(p.photos || []).length ? ' (' + p.photos.length + ')' : ''} ›</a></h3>
       ${IS_CREW ? `
       <div style="margin-bottom:14px">${photoUploaderHtml()}</div>` : ''}
-      ${(p.photos || []).length ? `
+      ${photos.length ? `
       <div class="photo-grid" id="jobPhotoGrid">
-        ${p.photos.map((ph) => `
-        <div class="photo-item" data-view="${p.photos.indexOf(ph)}">
+        ${photos.map((ph, i) => `
+        <div class="photo-item" data-view="${i}">
           <img src="/api/file/${ph.thumb || ph.file}" alt="${esc(ph.name)}" loading="lazy" />
           ${IS_CREW ? `<button class="photo-del" data-delphoto="${ph.id}" title="Delete photo">✕</button>` : ''}
         </div>`).join('')}
       </div>
-      <a href="#/job/${p.id}/photos" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">View all ${p.photos.length} photos →</a>` : '<div class="muted">No photos yet.</div>'}
-    </div>
+      <a href="#/job/${p.id}/photos" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">View all ${photos.length} photos →</a>` : '<div class="muted">No photos yet.</div>'}
+    </div>`}
 
     ${isAdmin && !p.overhead ? `
     <div class="panel">
@@ -1088,7 +1130,16 @@ async function renderJob(id) {
     </div>` : ''}
 
     <div class="panel">
-      <h3>Invoices &amp; Job Costs</h3>
+      <h3>${p.overhead ? 'Spending' : 'Invoices &amp; Job Costs'}</h3>
+      ${byCat.length ? `
+      <div class="cat-summary">
+        ${byCat.map((c) => `
+        <div class="cat-sum">
+          <div class="cat-sum-n">${money(c.amount)}</div>
+          <div class="cat-sum-l">${esc(c.category)}</div>
+          <div class="bar"><span style="width:${invTotal ? (c.amount / invTotal) * 100 : 0}%"></span></div>
+        </div>`).join('')}
+      </div>` : ''}
       <div class="info-grid" style="margin-bottom:16px">
         ${IS_DELIVERY ? '' : `<div><div class="k">Contract Price</div><div class="v">${money(p.price)}</div></div>`}
         <div><div class="k">Total Invoiced</div><div class="v" style="color:var(--red)">${money(invTotal)}</div></div>
@@ -1098,7 +1149,7 @@ async function renderJob(id) {
       <table class="inv-table">
         <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Paid To</th><th>Invoice</th><th class="right">Cost</th><th style="width:36px"></th></tr></thead>
         <tbody>
-          ${invoices.map((x) => `
+          ${invShown.map((x) => `
           <tr>
             <td>${fmtDate(x.date)}</td>
             <td>${esc(x.desc)}</td>
@@ -1115,7 +1166,8 @@ async function renderJob(id) {
             <td class="right" style="color:var(--red)">${money(invTotal)}</td><td></td>
           </tr>
         </tbody>
-      </table>` : `<div class="muted">No costs recorded on this job yet.${isAdmin ? ' Use “Add a cost” below to start tracking what it is costing you.' : ''}</div>`}
+      </table>
+      ${pager('inv', invPage, 'entries', invoices.length)}` : `<div class="muted">No costs recorded on this job yet.${isAdmin ? ' Use “Add a cost” below to start tracking what it is costing you.' : ''}</div>`}
       ${isAdmin ? addSection('inv', 'Add a cost', `
       <div class="form-grid">
         <div class="full"><label class="f">Description *</label><input class="f" id="invDesc" placeholder="e.g. Electrical rough-in" /></div>
@@ -1124,7 +1176,7 @@ async function renderJob(id) {
           <input class="f" id="invPaidTo" list="invVendors" placeholder="Sub or supplier" />
           <datalist id="invVendors">${vendors.map((v) => `<option value="${esc(v)}"></option>`).join('')}</datalist>
         </div>
-        <div><label class="f">Category</label><select class="f" id="invCategory">${categoryOptions('Materials')}</select></div>
+        <div><label class="f">Category</label><select class="f" id="invCategory">${categoryOptions(cats[0], cats)}</select></div>
         <div><label class="f">Date</label><input class="f" id="invDate" type="date" value="${today}" /></div>
         <div><label class="f">Invoice PDF or Photo (optional)</label>
           <input class="f" id="invFile" type="file" accept=".pdf,image/*" />
@@ -1197,7 +1249,7 @@ async function renderJob(id) {
   document.querySelectorAll('[data-view]').forEach((d) =>
     d.addEventListener('click', (e) => {
       if (e.target.closest('[data-delphoto]')) return;
-      openLightbox(p.photos || [], Number(d.dataset.view));
+      openLightbox(photos, Number(d.dataset.view));
     })
   );
 
@@ -1214,6 +1266,31 @@ async function renderJob(id) {
     };
     capRows();
     window.addEventListener('resize', capRows);
+  }
+
+  // general-spending uploader: everything lands on this bucket, no job to pick
+  if (p.overhead && IS_CREW && $('#photoCamBtn')) {
+    wirePhotoUploader(null, async () => {
+      const st = $('#ovStatus');
+      const category = ($('#ovCat') || {}).value || 'Other';
+      let filed = 0, waiting = 0;
+      try {
+        for (const r of await api('/api/receipts')) {
+          if (!r.amount) { waiting++; continue; }          // no price read — leave it in the inbox
+          await api('/api/receipts/' + r.id, { method: 'PUT', json: { category } });
+          await api(`/api/receipts/${r.id}/assign`, { method: 'POST', json: { projectId: id } });
+          filed++;
+        }
+      } catch { /* fall through to the message below */ }
+      if (st) {
+        st.className = 'scan-status' + (filed ? ' ok' : '');
+        st.innerHTML = filed
+          ? `✓ Filed ${filed} receipt${filed === 1 ? '' : 's'} under ${esc(category)}.`
+            + (waiting ? ` ${waiting} couldn't be priced — finish ${waiting === 1 ? 'it' : 'them'} on the <a href="#/receipts">Receipts tab</a>.` : '')
+          : (waiting ? `${waiting} receipt${waiting === 1 ? '' : 's'} need a cost — finish on the <a href="#/receipts">Receipts tab</a>.` : '');
+      }
+      renderJob(id);
+    }, { endpoint: '/api/receipts', field: 'receipt', thumbs: false, prepare: prepReceipt });
   }
 
   // documents — upload, rename-by-share-toggle, delete
@@ -1427,6 +1504,7 @@ async function renderJob(id) {
  * Snap receipts on site without picking a job. Each upload is scanned, then sits here
  * with editable fields until it gets filed to a job as that job's invoice. */
 async function renderReceipts() {
+  pagerRedraw = renderReceipts;
   const [receipts, projects] = await Promise.all([api('/api/receipts'), api('/api/projects')]);
   // general bucket first, then the jobs A–Z
   const jobs = [...(overheadOf(projects) ? [overheadOf(projects)] : []),
