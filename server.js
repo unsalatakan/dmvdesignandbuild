@@ -1109,6 +1109,12 @@ route('PUT', /^\/api\/projects\/(\d+)\/invoices\/(\d+)$/, async (req, res, m, bo
     const amount = Number(fields.amount);
     if (!amount || amount <= 0) return json(res, 400, { error: 'A valid cost is required' });
     inv.amount = amount;
+    // a cost that came from a check line keeps that line in step, so the two never disagree
+    if (inv.checkId) {
+      const k = (db.checks || []).find((c) => c.id === inv.checkId);
+      const line = k && (k.lines || []).find((l) => l.invoiceId === inv.id);
+      if (line) line.amount = amount;
+    }
   }
   const f = files.invoice;
   if (f) {

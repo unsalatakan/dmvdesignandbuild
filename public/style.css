@@ -135,6 +135,9 @@ input.f:focus, select.f:focus { outline: 2px solid var(--gold); border-color: tr
 .note-add input { flex: 1; }
 .del { background: none; border: none; color: #c2c6cd; cursor: pointer; font-size: 15px; }
 .del:hover { color: var(--red); }
+.del.edit:hover { color: var(--gold); }
+.row-acts { white-space: nowrap; }
+.row-acts .del + .del { margin-left: 6px; }
 
 /* photos */
 .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
