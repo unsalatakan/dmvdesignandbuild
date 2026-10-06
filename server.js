@@ -1507,18 +1507,32 @@ function matchProjectForLine(text) {
   return hits.length === 1 ? hits[0] : null;
 }
 
-/* Build the job-cost entry a check line creates. Description is just the check
+/* How a payment went out. Everything logged before this existed was a paper
+ * check, so a missing type reads as Check. */
+const PAY_TYPES = ['Check', 'Zelle', 'ACH', 'Wire', 'Credit Card'];
+const payTypeOf = (k) => (PAY_TYPES.includes(k.payType) ? k.payType : 'Check');
+function clampPayType(v) {
+  const t = PAY_TYPES.find((x) => x.toLowerCase() === String(v || '').trim().toLowerCase());
+  return t || null;
+}
+/* "Check #1009", "Zelle #A1B2", or just "Wire payment" when there's no number. */
+function payDesc(k) {
+  const t = payTypeOf(k);
+  return k.number ? t + ' #' + k.number : t + ' payment';
+}
+
+/* Build the job-cost entry a check line creates. Description is just the payment
  * reference — the job and amount carry the meaning. */
 function invoiceForLine(k, line, contractorName, targetProject) {
   return {
     id: nextId(),
-    desc: k.number ? 'Check #' + k.number : 'Check payment',
+    desc: payDesc(k),
     paidTo: contractorName || k.payee || '',
     category: clampCategory(targetProject, line.category || 'Subcontractor'),
     amount: line.amount,
     date: k.date,
     file: k.file, fileName: k.fileName,
-    checkId: k.id, checkNumber: k.number,
+    checkId: k.id, checkNumber: k.number, payType: payTypeOf(k),
     created: new Date().toISOString(),
   };
 }
@@ -1527,6 +1541,7 @@ function checkOut(k) {
   const c = (db.contractors || []).find((x) => x.id === k.contractorId);
   return {
     ...k,
+    payType: payTypeOf(k),
     contractorName: c ? c.name : null,
     total: cents((k.lines || []).reduce((s, l) => s + (l.amount || 0), 0)),
   };
@@ -1562,6 +1577,12 @@ route('POST', /^\/api\/checks$/, async (req, res, m, body, user) => {
     return json(res, 404, { error: 'Contractor not found' });
   }
   const payee = String(fields.payee || '').trim() || g.payee || '';
+  // a scanned photo is a paper check; a hand-logged one says how it was paid
+  let payType = 'Check';
+  if (fields.payType !== undefined && fields.payType !== '') {
+    payType = clampPayType(fields.payType);
+    if (!payType) return json(res, 400, { error: 'Payment type must be one of: ' + PAY_TYPES.join(', ') });
+  }
   // match the payee against contractors already on file (case/spacing tolerant)
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const hit = typedContractor
@@ -1570,6 +1591,7 @@ route('POST', /^\/api\/checks$/, async (req, res, m, body, user) => {
   const k = {
     id: nextId(),
     number: String(fields.number || '').trim() || g.number || '',
+    payType,
     payee,
     contractorId: hit ? hit.id : null,
     date: fields.date || g.date || new Date().toISOString().slice(0, 10),
@@ -1597,6 +1619,9 @@ route('POST', /^\/api\/checks$/, async (req, res, m, body, user) => {
 route('PUT', /^\/api\/checks\/(\d+)$/, (req, res, m, body) => {
   const k = (db.checks || []).find((x) => x.id === Number(m[1]));
   if (!k) return json(res, 404, { error: 'Check not found' });
+  const payType = body.payType !== undefined ? clampPayType(body.payType) : undefined;
+  if (payType === null) return json(res, 400, { error: 'Payment type must be one of: ' + PAY_TYPES.join(', ') });
+  if (payType) k.payType = payType;
   if (body.number !== undefined) k.number = String(body.number).trim();
   if (body.payee !== undefined) k.payee = String(body.payee).trim();
   if (body.date !== undefined) k.date = body.date || k.date;
@@ -1612,8 +1637,9 @@ route('PUT', /^\/api\/checks\/(\d+)$/, (req, res, m, body) => {
     for (const p of db.projects) {
       for (const inv of p.invoices || []) {
         if (!ids.includes(inv.id)) continue;
-        inv.desc = k.number ? 'Check #' + k.number : 'Check payment';
+        inv.desc = payDesc(k);
         inv.checkNumber = k.number;
+        inv.payType = payTypeOf(k);
         inv.date = k.date;
         inv.paidTo = c ? c.name : (k.payee || '');
       }
