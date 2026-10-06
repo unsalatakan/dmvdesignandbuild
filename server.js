@@ -157,6 +157,22 @@ function loadDb() {
     });
     saveDb();
   }
+  /* Design K&B: money spent on DKB's behalf, which DKB pays back. Same trick as the
+   * general bucket — a flagged project, so receipts and check lines file to it
+   * unchanged — but admin-only, and kept out of jobs, the P&L and job reports. Its
+   * payments are what DKB has paid back toward the balance. */
+  if (!db.projects.some((p) => p.dkb)) {
+    db.projects.push({
+      id: nextId(), dkb: true,
+      name: 'Design K&B',
+      address: '', lockbox: null, price: 0, startDate: null, status: 'active',
+      customerId: null, pmId: null, lat: null, lng: null,
+      contractFile: null, contractName: null, planFile: null, planName: null,
+      materialFileName: null, materials: [], notes: [], payments: [], dues: [], invoices: [], docs: [], photos: [],
+      created: new Date().toISOString(),
+    });
+    saveDb();
+  }
   if (!db.users.some((u) => u.role === 'admin')) {
     db.users.push({ id: nextId(), username: 'dmv', password: hash('dmv123'), role: 'admin', name: 'DMV Design and Build' });
     saveDb();
@@ -609,6 +625,7 @@ const CONTRACTOR_FIELDS = [
 ];
 function canAccess(p, user) {
   if (user.role === 'admin') return true;
+  if (p.dkb) return false;                            // Design K&B money is admin-only
   if (user.role === 'delivery') return true;          // needs every address to deliver to
   if (user.role === 'pm') return p.pmId === user.id;
   if (user.role === 'contractor') return !p.overhead && (p.contractorIds || []).includes(user.id);
@@ -799,7 +816,7 @@ route('PUT', /^\/api\/contractor-logins\/(\d+)\/jobs$/, (req, res, m, body) => {
   if (!db.users.some((u) => u.id === id && u.role === 'contractor')) return json(res, 404, { error: 'Contractor login not found' });
   const want = new Set((Array.isArray(body.projectIds) ? body.projectIds : []).map(Number));
   for (const p of db.projects) {
-    if (p.overhead) continue;
+    if (p.overhead || p.dkb) continue;
     const ids = (p.contractorIds || []).filter((x) => x !== id);
     if (want.has(p.id)) ids.push(id);
     p.contractorIds = ids;
@@ -882,6 +899,7 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
 route('DELETE', /^\/api\/projects\/(\d+)$/, (req, res, m) => {
   const target = db.projects.find((p) => p.id === Number(m[1]));
   if (target && target.overhead) return json(res, 400, { error: 'The general spending bucket cannot be deleted.' });
+  if (target && target.dkb) return json(res, 400, { error: 'The Design K&B page cannot be deleted.' });
   db.projects = db.projects.filter((p) => p.id !== Number(m[1]));
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
@@ -1471,7 +1489,10 @@ route('DELETE', /^\/api\/contractors\/(\d+)$/, (req, res, m) => {
 function matchProjectForLine(text) {
   const words = String(text || '').toLowerCase().match(/[a-z0-9]+/g) || [];
   if (!words.length) return null;
+  // "DKB" or "Design K&B" written on a line means the Design K&B bucket
+  if (words.includes('dkb') || /design\s*k\s*&?\s*b\b/i.test(text)) return db.projects.find((p) => p.dkb) || null;
   const hits = db.projects.filter((p) => {
+    if (p.dkb) return false;
     const pw = String(p.name).toLowerCase().match(/[a-z0-9]+/g) || [];
     const meaningful = pw.filter((w) => w.length > 2 && !['job', 'the', 'and', 'st', 'ave', 'rd'].includes(w));
     if (!meaningful.length) return false;
@@ -1724,6 +1745,7 @@ route('GET', /^\/api\/reports\/pl$/, (req, res, m, b, user, query) => {
   const byCategory = {};
   const byJob = [];
   for (const p of db.projects) {
+    if (p.dkb) continue;    // money spent for DKB is paid back, so it is not DMV's income or expense
     const received = (p.payments || [])
       .filter((x) => inRange(x.date || x.created, from, to))
       .reduce((s, x) => s + (x.amount || 0), 0);
@@ -1755,7 +1777,7 @@ route('GET', /^\/api\/reports\/pl$/, (req, res, m, b, user, query) => {
 
 /* Lifetime profitability per job — contract value against everything it has cost. */
 route('GET', /^\/api\/reports\/jobs$/, (req, res) => {
-  const rows = db.projects.filter((p) => !p.overhead).map((p) => {
+  const rows = db.projects.filter((p) => !p.overhead && !p.dkb).map((p) => {
     const spent = cents((p.invoices || []).reduce((s, x) => s + (x.amount || 0), 0));
     const received = cents((p.payments || []).reduce((s, x) => s + (x.amount || 0), 0));
     const price = p.price || 0;

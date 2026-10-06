@@ -32,8 +32,19 @@ function setRoleFlags() {
 /* The general-spending bucket is a project under the hood so receipts, checks and
  * invoices work on it unchanged — but it is not a job, so it stays out of job lists,
  * totals and the map. These two helpers are the only place that distinction lives. */
-const realJobs = (list) => list.filter((p) => !p.overhead);
+const realJobs = (list) => list.filter((p) => !p.overhead && !p.dkb);
 const overheadOf = (list) => list.find((p) => p.overhead) || null;
+/* Design K&B works the same way: spending done for DKB, and what DKB has paid back.
+ * Admin-only — the server never sends it to anyone else. */
+const dkbOf = (list) => list.find((p) => p.dkb) || null;
+/* Total = everything spent for DKB; paid = what DKB has paid back; balance = still owed. */
+const dkbTotals = (p) => {
+  const total = cents((p.invoices || []).reduce((s, x) => s + (x.amount || 0), 0));
+  const paid = cents((p.payments || []).reduce((s, x) => s + (x.amount || 0), 0));
+  return { total, paid, balance: cents(total - paid) };
+};
+/* The buckets that sit above the jobs in every "file this to…" dropdown. */
+const bucketsOf = (list) => [overheadOf(list), dkbOf(list)].filter(Boolean);
 
 /* ---------- pagination ----------
  * Page state lives here so a re-render (after filing or deleting) keeps you where
@@ -249,7 +260,7 @@ function showApp() {
   if (IS_STAFF) links.push(['#/orders', 'Orders']);          // material ordering is admin/PM work
   if (IS_CREW) links.push(['#/receipts', 'Receipts']);
   links.push(['#/photos', 'Photos']);
-  if (ME.role === 'admin') links.push(['#/reports', 'Reports'], ['#/contractors', 'Contractors'], ['#/customers', 'Customers'], ['#/managers', 'Managers']);
+  if (ME.role === 'admin') links.push(['#/dkb', 'Design K&B'], ['#/reports', 'Reports'], ['#/contractors', 'Contractors'], ['#/customers', 'Customers'], ['#/managers', 'Managers']);
   $('#navLinks').innerHTML = links.map(([h, t]) => `<a href="${h}" data-h="${h}">${t}</a>`).join('');
   if (!location.hash || location.hash === '#/') location.hash = '#/home';
   route();
@@ -311,6 +322,7 @@ on('#navBack', 'click', closeMenu);
 on('#navLinks', 'click', closeMenu);
 
 /* ---------- router ---------- */
+let dkbId = null;   // remembered once the Design K&B page has been opened
 window.addEventListener('hashchange', route);
 function route() {
   if (!ME) return;
@@ -319,6 +331,8 @@ function route() {
   const jobPhotosMatch = h.match(/^#\/job\/(\d+)\/photos/);
   if (jobPhotosMatch) return renderJobPhotos(Number(jobPhotosMatch[1]));
   const jobMatch = h.match(/^#\/job\/(\d+)/);
+  // the Design K&B page lives at its own tab, so its link stays lit
+  if (jobMatch && dkbId && Number(jobMatch[1]) === dkbId) { location.replace('#/dkb'); return; }
   if (jobMatch) return renderJob(Number(jobMatch[1]));
   if (h.startsWith('#/jobs')) return renderJobs();
   if (h.startsWith('#/orders') && IS_STAFF) return renderOrders();
@@ -332,6 +346,7 @@ function route() {
   if (h.startsWith('#/managers') && ME.role === 'admin') return renderManagers();
   if (h.startsWith('#/photos')) return renderPhotos();
   if (h.startsWith('#/customers') && ME.role === 'admin') return renderCustomers();
+  if (h.startsWith('#/dkb') && ME.role === 'admin') return renderDkb();
   renderHome();
 }
 
@@ -400,6 +415,7 @@ function financeChartSVG(projects) {
 async function renderHome() {
   const all = await api('/api/projects');
   const overhead = overheadOf(all);
+  const dkb = dkbOf(all);
   const projects = realJobs(all);              // jobs only — overhead is not a job
   const totalValue = projects.reduce((s, p) => s + (p.price || 0), 0);
   const isAdmin = IS_STAFF; // admin or project manager — not delivery
@@ -457,6 +473,11 @@ async function renderHome() {
         const spent = (overhead.invoices || []).reduce((s, x) => s + (x.amount || 0), 0);
         return `<div class="stat" style="cursor:pointer" onclick="location.hash='#/job/${overhead.id}'">
           <div class="num">${money(spent)}</div><div class="lbl">General Spending</div></div>`;
+      })() : ''}
+      ${isAdmin && dkb ? (() => {
+        const t = dkbTotals(dkb);
+        return `<div class="stat" style="cursor:pointer" onclick="location.hash='#/dkb'">
+          <div class="num" style="color:${t.balance > 0 ? 'var(--red)' : 'inherit'}">${money(t.balance)}</div><div class="lbl">Design K&amp;B Balance</div></div>`;
       })() : ''}
     </div>
     ${isAdmin && allDues.length ? (() => {
@@ -942,12 +963,21 @@ async function projectModal(p) {
 }
 
 /* ---------- JOB DETAIL ---------- */
+/* The Design K&B tab is that bucket's page, under its own link. */
+async function renderDkb() {
+  const dkb = dkbOf(await api('/api/projects'));
+  if (!dkb) { $('#main').innerHTML = '<div class="panel">Design K&amp;B is not set up yet.</div>'; return; }
+  dkbId = dkb.id;
+  return renderJob(dkb.id);
+}
+
 async function renderJob(id) {
   pagerRedraw = () => renderJob(id);
   let p;
   try { p = await api('/api/projects/' + id); }
   catch { $('#main').innerHTML = '<div class="panel">Job not found.</div>'; return; }
   const isAdmin = IS_STAFF; // admin or project manager — not delivery
+  const bucket = p.overhead || p.dkb;   // not a job: no address, docs, photos, schedule or materials
   const mats = p.materials || [];
   const toOrder = mats.filter((m) => !m.ordered);
   const totAll = mats.reduce((s, m) => s + m.price * (m.qty || 1), 0);
@@ -966,6 +996,7 @@ async function renderJob(id) {
   const pays = (p.payments || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const paid = pays.reduce((s, x) => s + (x.amount || 0), 0);
   const balance = (p.price || 0) - paid;
+  const dkbT = p.dkb ? dkbTotals(p) : null;   // spent for DKB, paid back, still owed
   const today = new Date().toISOString().slice(0, 10);
   const dues = (p.dues || []).slice().sort((a, b) =>
     (a.dueDate ? 0 : 1) - (b.dueDate ? 0 : 1) || String(a.dueDate).localeCompare(String(b.dueDate)));
@@ -1009,7 +1040,7 @@ async function renderJob(id) {
     <div class="page-head">
       <h1>${esc(p.name)}</h1>
       <div>
-        ${isAdmin ? `<button class="btn" id="editProjBtn">Edit</button>` : ''}${ME.role === 'admin' ? ` <button class="btn danger" id="delProjBtn">Delete</button>` : ''}
+        ${isAdmin && !bucket ? `<button class="btn" id="editProjBtn">Edit</button>` : ''}${ME.role === 'admin' && !bucket ? ` <button class="btn danger" id="delProjBtn">Delete</button>` : ''}
       </div>
     </div>
 
@@ -1026,7 +1057,17 @@ async function renderJob(id) {
       </div>
     </div>` : ''}
 
-    ${p.overhead ? `
+    ${p.dkb ? `
+    <div class="panel">
+      <div class="info-grid">
+        <div><div class="k">Total Spent for DKB</div><div class="v" style="color:var(--red)">${money(dkbT.total)}</div></div>
+        <div><div class="k">Paid Toward Balance</div><div class="v" style="color:var(--green)">${money(dkbT.paid)}</div></div>
+        <div><div class="k">Balance Owed</div><div class="v" style="color:${dkbT.balance > 0 ? 'var(--red)' : 'var(--green)'}">${money(dkbT.balance)}</div></div>
+      </div>
+      <div class="muted" style="margin-top:14px">Money spent for Design K&amp;B. Pick <b>Design K&amp;B</b> in the job dropdown
+      on a receipt or a check line to log a cost here, and record what DKB pays back below.
+      None of this counts toward job costs or the P&amp;L.</div>
+    </div>` : p.overhead ? `
     <div class="panel">
       <div class="muted">Spending that belongs to no single job — fuel, tools, office, general supplies.
       Pick this in the job dropdown on a receipt or a check line.</div>
@@ -1053,7 +1094,7 @@ async function renderJob(id) {
       <div id="jobmap"></div>
     </div>` : ''}
 
-    ${p.overhead && IS_CREW ? `
+    ${bucket && IS_CREW ? `
     <div class="panel">
       <h3>Add Receipts</h3>
       ${photoUploaderHtml({
@@ -1063,12 +1104,12 @@ async function renderJob(id) {
       })}
       <div class="scan-status" id="ovStatus"></div>
       <div class="muted" style="margin-top:10px">
-        Each one is read automatically and filed straight to general spending. Set its category
+        Each one is read automatically and filed straight to ${p.dkb ? 'Design K&amp;B' : 'general spending'}. Set its category
         in the list below once it lands. Anything the scanner can't price waits on the Receipts tab.
       </div>
     </div>` : ''}
 
-    ${p.overhead ? '' : `
+    ${bucket ? '' : `
     <div class="panel">
       <h3>Documents${docs.length ? ` <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${docs.length}</span>` : ''}</h3>
       ${IS_CREW ? addSection('doc', 'Upload documents', `
@@ -1100,7 +1141,7 @@ async function renderJob(id) {
       </table>` : `<div class="muted">${IS_CREW ? 'No documents yet. Upload permits, inspection reports, warranties — anything that belongs to this job.' : 'No documents shared yet.'}</div>`}
     </div>`}
 
-    ${p.overhead ? '' : `
+    ${bucket ? '' : `
     <div class="panel">
       <h3><a class="photo-job-link" href="#/job/${p.id}/photos">Photos${(p.photos || []).length ? ' (' + p.photos.length + ')' : ''} ›</a></h3>
       ${IS_CREW ? `
@@ -1116,7 +1157,7 @@ async function renderJob(id) {
       <a href="#/job/${p.id}/photos" class="muted" id="jobPhotosMore" style="display:none;margin-top:10px">View all ${photos.length} photos →</a>` : '<div class="muted">No photos yet.</div>'}
     </div>`}
 
-    ${isAdmin && !p.overhead ? `
+    ${isAdmin && !bucket ? `
     <div class="panel">
       <h3>Payment Schedule${owed ? ` <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${money(owed)} still due</span>` : ''}</h3>
       ${dues.length ? `
@@ -1151,15 +1192,16 @@ async function renderJob(id) {
 
     ${isAdmin && !p.overhead ? `
     <div class="panel">
-      <h3>Payments Received</h3>
+      <h3>${p.dkb ? 'Paid Toward Balance' : 'Payments Received'}</h3>
+      ${p.dkb ? '' : `
       <div class="info-grid" style="margin-bottom:16px">
         <div><div class="k">Contract Price</div><div class="v">${money(p.price)}</div></div>
         <div><div class="k">Received</div><div class="v" style="color:var(--green)">${money(paid)}</div></div>
         <div><div class="k">Balance Due</div><div class="v" style="color:${balance > 0 ? 'var(--red)' : 'var(--green)'}">${money(balance)}</div></div>
-      </div>
+      </div>`}
       ${pays.length ? `
       <table>
-        <thead><tr><th>Date</th><th>For</th><th class="right">Amount</th><th style="width:36px"></th></tr></thead>
+        <thead><tr><th>Date</th><th>${p.dkb ? 'Note' : 'For'}</th><th class="right">Amount</th><th style="width:36px"></th></tr></thead>
         <tbody>
           ${pays.map((x) => `
           <tr>
@@ -1168,21 +1210,21 @@ async function renderJob(id) {
             <td class="right"><b>${money(x.amount)}</b></td>
             <td class="right"><button class="del" data-delpay="${x.id}" title="Delete payment">✕</button></td>
           </tr>`).join('')}
-          <tr class="totals-row"><td colspan="2">Total received (${pays.length} payment${pays.length === 1 ? '' : 's'})</td><td class="right" style="color:var(--green)">${money(paid)}</td><td></td></tr>
+          <tr class="totals-row"><td colspan="2">${p.dkb ? 'Total paid back' : 'Total received'} (${pays.length} payment${pays.length === 1 ? '' : 's'})</td><td class="right" style="color:var(--green)">${money(paid)}</td><td></td></tr>
         </tbody>
       </table>` : '<div class="muted">No payments recorded yet.</div>'}
-      ${addSection('pay', 'Record a payment received', `
+      ${addSection('pay', p.dkb ? 'Record a payment from DKB' : 'Record a payment received', `
       <div class="form-grid">
         <div><label class="f">Amount ($)</label><input class="f" id="payAmount" type="number" step="0.01" min="0" placeholder="0.00" /></div>
         <div><label class="f">Date Received</label><input class="f" id="payDate" type="date" value="${today}" /></div>
-        <div class="full"><label class="f">What For (e.g. deposit, framing complete)</label><input class="f" id="payNote" placeholder="Optional" /></div>
+        <div class="full"><label class="f">${p.dkb ? 'Note (e.g. check #, transfer)' : 'What For (e.g. deposit, framing complete)'}</label><input class="f" id="payNote" placeholder="Optional" /></div>
         <div class="full" style="text-align:right"><button class="btn gold" id="payAddBtn">+ Add Payment</button></div>
       </div>`)}
     </div>` : ''}
 
     ${IS_CREW ? `
     <div class="panel">
-      <h3>${p.overhead ? 'Spending' : 'Invoices &amp; Job Costs'}</h3>
+      <h3>${bucket ? 'Spending' : 'Invoices &amp; Job Costs'}</h3>
       ${invoices.length ? `
       <div class="cost-filters">
         <div><label class="f">From</label><input class="f" type="date" data-cf="from" value="${f.from}" /></div>
@@ -1213,7 +1255,7 @@ async function renderJob(id) {
           <div class="bar"><span style="width:${shownTotal ? (c.amount / shownTotal) * 100 : 0}%"></span></div>
         </div>`).join('')}
       </div>` : ''}
-      ${p.overhead ? '' : `
+      ${bucket ? '' : `
       <div class="info-grid" style="margin-bottom:16px">
         ${IS_DELIVERY ? '' : `<div><div class="k">Contract Price</div><div class="v">${money(p.price)}</div></div>`}
         <div><div class="k">Total Invoiced</div><div class="v" style="color:var(--red)">${money(invTotal)}</div></div>
@@ -1245,7 +1287,7 @@ async function renderJob(id) {
       </table>
       ${pager('inv', invPage, 'entries', shownCosts.length)}`
       : filtered ? '<div class="muted">Nothing matches those filters.</div>'
-      : `<div class="muted">No costs recorded on this job yet.${isAdmin ? ' Use “Add a cost” below to start tracking what it is costing you.' : ''}</div>`}
+      : `<div class="muted">No costs recorded ${bucket ? 'here' : 'on this job'} yet.${isAdmin ? ' Use “Add a cost” below to start tracking what it is costing you.' : ''}</div>`}
       ${isAdmin ? addSection('inv', 'Add a cost', `
       <div class="form-grid">
         <div class="full"><label class="f">Description *</label><input class="f" id="invDesc" placeholder="e.g. Electrical rough-in" /></div>
@@ -1265,7 +1307,7 @@ async function renderJob(id) {
       </div>`) : ''}
     </div>` : ''}
 
-    ${isAdmin && !p.overhead ? `
+    ${isAdmin && !bucket ? `
     <div class="panel">
       <h3>Material List ${p.materialFileName ? '— from ' + esc(p.materialFileName) : ''}</h3>
       <div style="margin-bottom:14px">
@@ -1347,7 +1389,7 @@ async function renderJob(id) {
   }
 
   // general-spending uploader: everything lands on this bucket, no job to pick
-  if (p.overhead && IS_CREW && $('#photoCamBtn')) {
+  if (bucket && IS_CREW && $('#photoCamBtn')) {
     wirePhotoUploader(null, async () => {
       const st = $('#ovStatus');
       let filed = 0, waiting = 0;
@@ -1406,7 +1448,9 @@ async function renderJob(id) {
   }
 
   // photos are crew work — the delivery guy adds and removes them too
-  if (IS_CREW) {
+  // not on the general / DKB pages: their uploader is the receipt one wired above,
+  // and binding it twice sent every receipt to the photo list as well
+  if (IS_CREW && !bucket) {
     wirePhotoUploader(id, () => renderJob(id));
     document.querySelectorAll('[data-delphoto]').forEach((b) =>
       b.addEventListener('click', async (e) => {
@@ -1610,8 +1654,8 @@ async function renderJob(id) {
 async function renderReceipts() {
   pagerRedraw = renderReceipts;
   const [receipts, projects] = await Promise.all([api('/api/receipts'), api('/api/projects')]);
-  // general bucket first, then the jobs A–Z
-  const jobs = [...(overheadOf(projects) ? [overheadOf(projects)] : []),
+  // general bucket and Design K&B first, then the jobs A–Z
+  const jobs = [...bucketsOf(projects),
     ...realJobs(projects).sort((a, b) => a.name.localeCompare(b.name))];
   const total = receipts.reduce((s, r) => s + (r.amount || 0), 0);
   const needsAttention = receipts.filter((r) => !r.amount).length;
@@ -1974,8 +2018,8 @@ async function renderCheck(id) {
   try { k = await api('/api/checks/' + id); }
   catch { $('#main').innerHTML = '<div class="panel">Check not found.</div>'; return; }
   const [projects, contractors] = await Promise.all([api('/api/projects'), api('/api/contractors')]);
-  // general bucket first, then the jobs A–Z
-  const jobs = [...(overheadOf(projects) ? [overheadOf(projects)] : []),
+  // general bucket and Design K&B first, then the jobs A–Z
+  const jobs = [...bucketsOf(projects),
     ...realJobs(projects).sort((a, b) => a.name.localeCompare(b.name))];
   const lines = k.lines || [];
   const unassigned = lines.filter((l) => !l.projectId).length;
