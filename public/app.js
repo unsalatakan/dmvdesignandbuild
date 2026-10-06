@@ -137,6 +137,16 @@ const fileSize = (b) => (b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.m
 const EXPENSE_CATEGORIES = ['Materials', 'Subcontractor', 'Labor', 'Permits & Fees',
   'Equipment Rental', 'Tools', 'Fuel & Vehicle', 'Insurance', 'Office & Admin', 'Other'];
 /* The general bucket tracks company running costs, so it uses its own set. */
+/* How a payment to a contractor went out. Older entries have no type and were checks. */
+const PAY_TYPES = ['Check', 'Zelle', 'ACH', 'Wire', 'Credit Card'];
+const payTypeOf = (k) => (PAY_TYPES.includes(k.payType) ? k.payType : 'Check');
+const payOptions = (sel) => PAY_TYPES.map((t) => `<option value="${t}" ${t === sel ? 'selected' : ''}>${t}</option>`).join('');
+/* "#1009" for a check, "Zelle #A1B2" or just "Zelle" for anything else. */
+const payRef = (k) => {
+  const t = payTypeOf(k);
+  if (t === 'Check') return k.number ? '#' + esc(k.number) : 'No number';
+  return t + (k.number ? ' #' + esc(k.number) : '');
+};
 const OVERHEAD_CATEGORIES = ['Landfill', 'Gas', 'Food', 'Office Supply', 'Salary', 'Other'];
 const categoriesFor = (p) => (p && p.overhead ? OVERHEAD_CATEGORIES : EXPENSE_CATEGORIES);
 const categoryOptions = (sel, list = EXPENSE_CATEGORIES) => list
@@ -2050,7 +2060,7 @@ async function renderCheck(id) {
 
   $('#main').innerHTML = `
     <div class="page-head">
-      <h1>Check ${k.number ? '#' + esc(k.number) : ''}</h1>
+      <h1>${payTypeOf(k) === 'Check' ? 'Check' : esc(payTypeOf(k)) + ' Payment'} ${k.number ? '#' + esc(k.number) : ''}</h1>
       <div>
         ${k.contractorId ? `<a class="btn" href="#/contractor/${k.contractorId}">← ${esc(k.contractorName)}</a>` : '<a class="btn" href="#/contractors">← Contractors</a>'}
         <button class="btn danger" id="delCheckBtn">Delete</button>
@@ -2059,13 +2069,14 @@ async function renderCheck(id) {
 
     <div class="check-summary">
       <div>
-        <div class="k">Check Number</div>
+        <div class="k">${payTypeOf(k) === 'Check' ? 'Check Number' : 'Reference #'}</div>
         <div class="check-num">${k.number ? '#' + esc(k.number) : '<span class="muted">Not read</span>'}</div>
         <div class="k" style="margin-top:12px">Total</div>
         <div class="check-total">${money(k.total)}</div>
       </div>
       <div class="check-meta">
         <div><div class="k">Paid To</div><div class="v">${k.contractorName ? `<a href="#/contractor/${k.contractorId}">${esc(k.contractorName)}</a>` : `<span class="muted">${esc(k.payee || 'Unknown')} — not linked</span>`}</div></div>
+        <div><div class="k">Payment Type</div><div class="v">${esc(payTypeOf(k))}</div></div>
         <div><div class="k">Date</div><div class="v">${fmtDate(k.date)}</div></div>
         <div><div class="k">Lines</div><div class="v">${lines.length}${unassigned ? ` <span class="badge badge-amber">${unassigned} unassigned</span>` : ''}</div></div>
       </div>
@@ -2087,7 +2098,8 @@ async function renderCheck(id) {
     <div class="panel">
       <h3><span class="step-n">1</span> Check Details</h3>
       <div class="form-grid">
-        <div><label class="f">Check Number</label><input class="f" id="ckNum" value="${esc(k.number)}" /></div>
+        <div><label class="f">Payment Type</label><select class="f" id="ckType">${payOptions(payTypeOf(k))}</select></div>
+        <div><label class="f">Check / Reference #</label><input class="f" id="ckNum" value="${esc(k.number)}" /></div>
         <div><label class="f">Date</label><input class="f" id="ckDate" type="date" value="${k.date || ''}" /></div>
         <div class="full"><label class="f">Paid To</label>
           <select class="f" id="ckCon">
@@ -2162,7 +2174,7 @@ async function renderCheck(id) {
   const note = $('#ckNote');
   const saveHeader = () => api('/api/checks/' + id, {
     method: 'PUT',
-    json: { number: $('#ckNum').value.trim(), date: $('#ckDate').value, contractorId: $('#ckCon').value || null },
+    json: { payType: $('#ckType').value, number: $('#ckNum').value.trim(), date: $('#ckDate').value, contractorId: $('#ckCon').value || null },
   });
   on('#ckSave', 'click', async () => {
     note.textContent = 'Saving…';
@@ -2180,7 +2192,7 @@ async function renderCheck(id) {
       const fresh = await api('/api/checks/' + id);
       const open = (fresh.lines || []).filter((l) => !l.projectId).length;
       const missing = [];
-      if (!fresh.number) missing.push('a check number');
+      if (!fresh.number && payTypeOf(fresh) === 'Check') missing.push('a check number');
       if (!fresh.contractorId) missing.push('who it was paid to');
       if (!(fresh.lines || []).length) missing.push('at least one job line');
       else if (open) missing.push(`a job for ${open} line${open === 1 ? '' : 's'}`);
@@ -2341,7 +2353,7 @@ async function renderContractors() {
     <div class="panel">
       <h3>Needs Attention</h3>
       ${loose.length ? `<div style="margin-bottom:10px">${loose.length} check${loose.length === 1 ? '' : 's'} not linked to a contractor:
-        ${loose.map((k) => `<a class="mini-chip" href="#/check/${k.id}">${k.number ? '#' + esc(k.number) : 'No number'}${k.payee ? ' — ' + esc(k.payee) : ''}</a>`).join('')}</div>` : ''}
+        ${loose.map((k) => `<a class="mini-chip" href="#/check/${k.id}">${payRef(k)}${k.payee ? ' — ' + esc(k.payee) : ''}</a>`).join('')}</div>` : ''}
       ${openLines ? `<div class="muted">${openLines} check line${openLines === 1 ? '' : 's'} still need a job assigned — their cost isn't counted against any job yet.</div>` : ''}
     </div>` : ''}
 
@@ -2377,7 +2389,13 @@ async function renderContractors() {
     openModal(`
       <h2>Log a Check</h2>
       <form id="ckManForm" class="form-grid">
-        <div><label class="f">Check Number</label><input class="f" name="number" inputmode="numeric" placeholder="1009" /></div>
+        <div><label class="f">Payment Type *</label>
+          <select class="f" name="payType" required>
+            <option value="">— How was it paid? —</option>
+            ${payOptions('')}
+          </select>
+        </div>
+        <div><label class="f">Check / Reference #</label><input class="f" name="number" placeholder="1009" /></div>
         <div><label class="f">Date</label><input class="f" name="date" type="date" value="${todayISO()}" /></div>
         <div class="full"><label class="f">Paid To</label>
           <select class="f" name="contractorId">
@@ -2500,18 +2518,19 @@ async function renderContractor(id) {
       <h3>Checks</h3>
       ${theirs.length ? `
       <table>
-        <thead><tr><th>Check #</th><th>Date</th><th>For</th><th class="right">Amount</th></tr></thead>
+        <thead><tr><th>Check / Ref #</th><th>Type</th><th>Date</th><th>For</th><th class="right">Amount</th></tr></thead>
         <tbody>
           ${theirs.map((k) => `
           <tr>
             <td><a href="#/check/${k.id}"><b>${k.number ? '#' + esc(k.number) : 'No number'}</b></a></td>
+            <td>${esc(payTypeOf(k))}</td>
             <td>${fmtDate(k.date)}</td>
             <td>${(k.lines || []).length
               ? `${k.lines.length} job${k.lines.length === 1 ? '' : 's'}${k.lines.some((l) => !l.projectId) ? ' <span class="badge badge-amber">needs a job</span>' : ''}`
               : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(k.total)}</b></td>
           </tr>`).join('')}
-          <tr class="totals-row"><td colspan="3">Total paid (${theirs.length} check${theirs.length === 1 ? '' : 's'})</td><td class="right" style="color:var(--red)">${money(total)}</td></tr>
+          <tr class="totals-row"><td colspan="4">Total paid (${theirs.length} payment${theirs.length === 1 ? '' : 's'})</td><td class="right" style="color:var(--red)">${money(total)}</td></tr>
         </tbody>
       </table>` : '<div class="muted">No checks on file for this contractor yet.</div>'}
     </div>`;
@@ -3104,7 +3123,7 @@ function openLightbox(photos, startIdx) {
 function editCost(projectId, x, cats, onSaved) {
   const list = cats.includes(x.category) ? cats : [...cats, x.category || 'Other'];
   openModal(`
-    <h2>Edit ${x.checkId ? 'Check Payment' : 'Receipt'}</h2>
+    <h2>Edit ${x.checkId ? esc(x.payType || 'Check') + ' Payment' : 'Receipt'}</h2>
     <form id="costForm" class="form-grid">
       <div class="full"><label class="f">Description *</label><input class="f" name="desc" required value="${esc(x.desc || '')}" /></div>
       <div><label class="f">Cost ($) *</label><input class="f" name="amount" type="number" step="0.01" min="0" required value="${x.amount || ''}" /></div>
