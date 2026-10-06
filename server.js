@@ -571,27 +571,60 @@ async function geocode(address) {
 function projectOut(p, user) {
   const customer = db.users.find((u) => u.id === p.customerId);
   const pm = db.users.find((u) => u.id === p.pmId && u.role === 'pm');
-  const base = { ...p, customerName: customer ? customer.name : null, pmName: pm ? pm.name : null };
+  const contractorIds = p.contractorIds || [];
+  // contractors see an allow-list, not "everything minus": a field added to jobs
+  // later stays hidden from them until it is deliberately put on this list
+  if (user.role === 'contractor') {
+    const out = {};
+    for (const k of CONTRACTOR_FIELDS) if (p[k] !== undefined) out[k] = p[k];
+    out.docs = (p.docs || []).map((d) => ({ id: d.id, file: d.file, fileName: d.fileName, label: d.label, size: d.size, uploaded: d.uploaded }));
+    out.photos = p.photos || [];
+    return out;
+  }
+  const base = {
+    ...p, contractorIds,
+    customerName: customer ? customer.name : null, pmName: pm ? pm.name : null,
+    contractorNames: contractorIds.map((id) => (db.users.find((u) => u.id === id && u.role === 'contractor') || {}).name).filter(Boolean),
+  };
   // customers see the contract price and nothing else money-related:
   // no material costs, no internal notes, no receipts, no payment schedule
   if (user.role === 'customer') {
-    const { materials, notes, payments, dues, invoices, ...rest } = base;
+    const { materials, notes, payments, dues, invoices, contractorIds: _c, contractorNames: _cn, ...rest } = base;
     rest.docs = (base.docs || []).filter((d) => d.shared);   // internal documents stay internal
     return rest;
   }
   // delivery sees where the job is and what it has cost — not what it sells for,
   // not what has been paid in, and not the material order list
   if (user.role === 'delivery') {
-    const { materials, notes, payments, dues, price, ...rest } = base;
+    const { materials, notes, payments, dues, price, contractorIds: _c, contractorNames: _cn, ...rest } = base;
     return rest;
   }
   return base;
 }
+/* What a contractor login sees on a job they are assigned to: job info, address,
+ * lockbox, contract and plans. Documents and photos are added in projectOut. */
+const CONTRACTOR_FIELDS = [
+  'id', 'name', 'address', 'lat', 'lng', 'lockbox', 'status', 'startDate',
+  'contractFile', 'contractName', 'planFile', 'planName',
+];
 function canAccess(p, user) {
   if (user.role === 'admin') return true;
   if (user.role === 'delivery') return true;          // needs every address to deliver to
   if (user.role === 'pm') return p.pmId === user.id;
-  return p.customerId === user.id;
+  if (user.role === 'contractor') return !p.overhead && (p.contractorIds || []).includes(user.id);
+  if (user.role === 'customer') return p.customerId === user.id;
+  return false;
+}
+/* Contractor logins assigned to a job arrive as a JSON array, a comma list, or
+ * repeated form fields; keep only ids that really are contractor logins. */
+function cleanContractorIds(v) {
+  let list = v;
+  if (typeof v === 'string') {
+    try { list = JSON.parse(v); } catch { list = v.split(','); }
+  }
+  if (!Array.isArray(list)) list = list == null || list === '' ? [] : [list];
+  const ids = [...new Set(list.map(Number).filter(Boolean))];
+  return ids.filter((id) => db.users.some((u) => u.id === id && u.role === 'contractor'));
 }
 function findProject(id, user) {
   const p = db.projects.find((x) => x.id === Number(id));
@@ -730,6 +763,43 @@ route('DELETE', /^\/api\/delivery\/(\d+)$/, (req, res, m) => {
   saveDb(); json(res, 200, { ok: true });
 }, { admin: true });
 
+/* contractor logins — trades who get a read-only view of the jobs they are put on.
+ * Not the same as /api/contractors, which is the payee list checks are written to. */
+route('GET', /^\/api\/contractor-logins$/, (req, res) => {
+  json(res, 200, db.users.filter((u) => u.role === 'contractor').map(({ password, ...u }) => ({
+    ...u, projectCount: db.projects.filter((p) => (p.contractorIds || []).includes(u.id)).length,
+  })));
+}, { staff: true });
+
+route('POST', /^\/api\/contractor-logins$/, (req, res, m, body) => {
+  const { name, username, password, email } = body || {};
+  if (!name || !username || !password) return json(res, 400, { error: 'Name, username and password are required' });
+  const uname = String(username).trim().toLowerCase();
+  if (db.users.some((u) => u.username.toLowerCase() === uname)) return json(res, 400, { error: 'Username already exists' });
+  const c = { id: nextId(), username: uname, password: hash(password), role: 'contractor', name: String(name).trim(), email: email ? String(email).trim() : null };
+  db.users.push(c); saveDb();
+  const { password: _, ...out } = c;
+  json(res, 200, out);
+}, { admin: true });
+
+route('PUT', /^\/api\/contractor-logins\/(\d+)$/, (req, res, m, body) => {
+  const c = db.users.find((u) => u.id === Number(m[1]) && u.role === 'contractor');
+  if (!c) return json(res, 404, { error: 'Contractor login not found' });
+  if (body.name) c.name = String(body.name).trim();
+  if (body.password) c.password = hash(body.password);
+  if (body.email !== undefined) c.email = String(body.email || '').trim() || null;
+  saveDb();
+  const { password: _, ...out } = c;
+  json(res, 200, out);
+}, { admin: true });
+
+route('DELETE', /^\/api\/contractor-logins\/(\d+)$/, (req, res, m) => {
+  const id = Number(m[1]);
+  db.users = db.users.filter((u) => !(u.id === id && u.role === 'contractor'));
+  db.projects.forEach((p) => { if (p.contractorIds) p.contractorIds = p.contractorIds.filter((x) => x !== id); });
+  saveDb(); json(res, 200, { ok: true });
+}, { admin: true });
+
 /* projects */
 route('GET', /^\/api\/projects$/, (req, res, m, b, user) => {
   const list = db.projects.filter((p) => canAccess(p, user));
@@ -757,6 +827,7 @@ route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
     status: ['talks', 'upcoming', 'active', 'done'].includes(fields.status) ? fields.status : 'active',
     customerId: fields.customerId ? Number(fields.customerId) : null,
     pmId: fields.pmId ? Number(fields.pmId) : null,
+    contractorIds: cleanContractorIds(fields.contractorIds),
     lat: geo.lat, lng: geo.lng,
     contractFile: files.contract ? files.contract.filename : null,
     contractName: files.contract ? files.contract.originalname : null,
@@ -781,6 +852,7 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
   if (fields.status !== undefined && ['talks', 'upcoming', 'active', 'done'].includes(fields.status)) p.status = fields.status;
   if (fields.customerId !== undefined) p.customerId = fields.customerId ? Number(fields.customerId) : null;
   if (fields.pmId !== undefined) p.pmId = fields.pmId ? Number(fields.pmId) : null;
+  if (fields.contractorIds !== undefined) p.contractorIds = cleanContractorIds(fields.contractorIds);
   if (fields.address && fields.address !== p.address) {
     p.address = fields.address;
     const geo = await geocode(fields.address);
@@ -1896,7 +1968,7 @@ route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
   }
   // unfiled receipts belong to no job yet — staff can open them, nobody else
   const inInbox = (db.receipts || []).some((r) => r.file === name);
-  if (inInbox && user.role === 'customer') return json(res, 403, { error: 'No access' });
+  if (inInbox && !['admin', 'pm', 'delivery'].includes(user.role)) return json(res, 403, { error: 'No access' });
   if (!inInbox) {
     const owner = db.projects.find((p) => [p.contractFile, p.planFile].includes(name)
       || (p.photos || []).some((ph) => ph.file === name || ph.thumb === name)
@@ -1907,7 +1979,7 @@ route('GET', /^\/api\/file\/([^/]+)$/, (req, res, m, b, user) => {
     const doc = (owner.docs || []).find((d) => d.file === name);
     if (doc && !doc.shared && user.role === 'customer') return json(res, 403, { error: 'No access' });
     // invoices are internal cost records — never served to the customer, even on their own job
-    if (user.role === 'customer' && (owner.invoices || []).some((iv) => iv.file === name)) {
+    if (['customer', 'contractor'].includes(user.role) && (owner.invoices || []).some((iv) => iv.file === name)) {
       return json(res, 403, { error: 'No access' });
     }
   }

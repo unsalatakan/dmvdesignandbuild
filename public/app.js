@@ -18,12 +18,15 @@ const statusBadge = (p) => { const [label, color] = STATUS[statusOf(p)]; return 
 /* Role shorthands, kept in one place so a permission question has one answer.
  *   staff    = admin or project manager (the money and ordering side)
  *   crew     = staff plus the delivery guy (site work: photos, receipts)
- *   delivery = sees where jobs are and what they cost, never what they sell for */
-let IS_STAFF = false, IS_CREW = false, IS_DELIVERY = false;
+ *   delivery = sees where jobs are and what they cost, never what they sell for
+ *   contractor = a trade put on specific jobs: job info, address, lockbox, contract,
+ *                plans, documents and photos — read only, no money of any kind */
+let IS_STAFF = false, IS_CREW = false, IS_DELIVERY = false, IS_CONTRACTOR = false;
 function setRoleFlags() {
   IS_STAFF = ['admin', 'pm'].includes(ME.role);
   IS_CREW = IS_STAFF || ME.role === 'delivery';
   IS_DELIVERY = ME.role === 'delivery';
+  IS_CONTRACTOR = ME.role === 'contractor';
 }
 
 /* The general-spending bucket is a project under the hood so receipts, checks and
@@ -240,9 +243,9 @@ function showApp() {
   $('#loginView').classList.add('hidden');
   $('#appView').classList.remove('hidden');
   setRoleFlags();
-  const roleLabel = { admin: ' (Admin)', pm: ' (Project Manager)', delivery: ' (Delivery)' }[ME.role] || '';
+  const roleLabel = { admin: ' (Admin)', pm: ' (Project Manager)', delivery: ' (Delivery)', contractor: ' (Contractor)' }[ME.role] || '';
   $('#whoami').textContent = ME.name + roleLabel;
-  const links = [['#/home', 'Home'], ['#/jobs', ME.role === 'customer' ? 'My Jobs' : 'Jobs']];
+  const links = [['#/home', 'Home'], ['#/jobs', ['customer', 'contractor'].includes(ME.role) ? 'My Jobs' : 'Jobs']];
   if (IS_STAFF) links.push(['#/orders', 'Orders']);          // material ordering is admin/PM work
   if (IS_CREW) links.push(['#/receipts', 'Receipts']);
   links.push(['#/photos', 'Photos']);
@@ -414,9 +417,21 @@ async function renderHome() {
     .flatMap((p) => (p.photos || []).map((ph) => ({ ...ph, projectName: p.name, projectId: p.id })))
     .sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
   // the delivery guy gets the map and nothing else — it is the only thing he needs
-  if (IS_DELIVERY) {
+  if (IS_DELIVERY || IS_CONTRACTOR) {
     $('#main').innerHTML = `
       <div class="page-head"><h1>Welcome, ${esc(ME.name)}</h1></div>
+      ${IS_CONTRACTOR ? (projects.length ? `
+      <div class="panel">
+        <h3>My Jobs</h3>
+        <table>
+          <tbody>${projects.map((p) => `
+            <tr>
+              <td><a href="#/job/${p.id}"><b>${esc(p.name)}</b></a></td>
+              <td>${addrLink(p)}</td>
+              <td>${statusBadge(p)}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>` : '<div class="panel muted">You have not been added to any jobs yet.</div>') : ''}
       <div class="panel map-card" id="mapCard">
         <h3>Job Map</h3>
         <div class="map-hint">Click map to expand ⛶</div>
@@ -671,7 +686,7 @@ async function renderJobs() {
         <h4>${esc(p.name)}</h4>
         <div class="addr">📍 ${addrLink(p)}</div>
         <div class="job-meta">
-          ${IS_DELIVERY ? '' : `<span><b>${money(p.price)}</b></span>`}
+          ${IS_DELIVERY || IS_CONTRACTOR ? '' : `<span><b>${money(p.price)}</b></span>`}
           <span>Starts <b>${fmtDate(p.startDate)}</b></span>
           ${statusBadge(p)}
           ${isAdmin && dueTotal(p) ? `<span class="badge ${openDues(p).some(isOverdue) ? 'badge-red' : 'badge-amber'}">${money(dueTotal(p))} due</span>` : ''}
@@ -867,7 +882,9 @@ async function renderPhotos() {
 async function projectModal(p) {
   const customers = await api('/api/customers');
   const pms = await api('/api/pms');
+  const subs = await api('/api/contractor-logins').catch(() => null);
   const isEdit = !!p;
+  const onJob = new Set(isEdit ? p.contractorIds || [] : []);
   openModal(`
     <h2>${isEdit ? 'Edit Project' : 'New Project'}</h2>
     <form id="projForm" class="form-grid">
@@ -893,6 +910,13 @@ async function projectModal(p) {
           ${pms.map((c) => `<option value="${c.id}" ${isEdit && p.pmId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
         </select>
       </div>
+      ${subs ? `<div class="full"><label class="f">Contractors with access to this job</label>
+        ${subs.length ? `<div class="sub-picks">${subs.map((c) => `
+          <label class="doc-share" style="margin-right:16px"><input type="checkbox" data-subpick value="${c.id}" ${onJob.has(c.id) ? 'checked' : ''} /> <span>${esc(c.name)}</span></label>`).join('')}
+        </div>
+        <div class="muted" style="font-size:12px;margin-top:4px">They see this job's info, address, lockbox, contract, plans, documents and photos. Nothing about money.</div>`
+        : '<div class="muted">No contractor logins yet. Add them on the Managers page.</div>'}
+      </div>` : ''}
       <div><label class="f">Contract ${isEdit && p.contractName ? '(current: ' + esc(p.contractName) + ')' : ''}</label><input class="f" name="contract" type="file" /></div>
       <div><label class="f">Arch Plan PDF ${isEdit && p.planName ? '(current: ' + esc(p.planName) + ')' : ''}</label><input class="f" name="plan" type="file" accept=".pdf" /></div>
       <div class="modal-actions full">
@@ -904,6 +928,8 @@ async function projectModal(p) {
   on('#projForm', 'submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    // only send the list when it was shown, so a failed lookup never clears it
+    if (subs) fd.set('contractorIds', JSON.stringify([...e.target.querySelectorAll('[data-subpick]:checked')].map((x) => Number(x.value))));
     const btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true; btn.textContent = 'Saving… (locating address)';
     try {
@@ -974,7 +1000,7 @@ async function renderJob(id) {
   })).filter((x) => x.amount).sort((a, b) => b.amount - a.amount);
   const invPage = pageOf('inv', shownCosts.length, 20);
   const invShown = shownCosts.slice(invPage.start, invPage.end);
-  const isCustomer = ME.role === 'customer';
+  const isCustomer = ME.role === 'customer' || IS_CONTRACTOR;   // read-only document view
   const docs = (p.docs || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
   // newest photo first — the latest site shot is the useful preview
   const photos = (p.photos || []).slice().sort((a, b) => String(b.uploaded).localeCompare(String(a.uploaded)));
@@ -1009,9 +1035,10 @@ async function renderJob(id) {
       <div class="info-grid">
         <div><div class="k">Address</div><div class="v">${addrLink(p, 'addr-big')}</div></div>
         <div><div class="k">Lockbox Code</div><div class="v">${p.lockbox ? `<span class="lockbox-code" data-lb="${esc(p.lockbox)}" title="Tap to copy">🔒 ${esc(p.lockbox)}</span>` : '<span class="muted">—</span>'}</div></div>
-        ${IS_DELIVERY ? '' : `<div><div class="k">Price</div><div class="v">${money(p.price)}</div></div>`}
+        ${IS_DELIVERY || IS_CONTRACTOR ? '' : `<div><div class="k">Price</div><div class="v">${money(p.price)}</div></div>`}
         <div><div class="k">Job Start Date</div><div class="v">${fmtDate(p.startDate)}</div></div>
-        <div><div class="k">Customer</div><div class="v">${esc(p.customerName || '—')}</div></div>
+        ${IS_CONTRACTOR ? `<div><div class="k">Status</div><div class="v">${statusBadge(p)}</div></div>` : `<div><div class="k">Customer</div><div class="v">${esc(p.customerName || '—')}</div></div>`}
+        ${isAdmin ? `<div><div class="k">Contractors</div><div class="v">${(p.contractorNames || []).length ? p.contractorNames.map(esc).join(', ') : '<span class="muted">—</span>'}</div></div>` : ''}
       </div>
       <div style="margin-top:16px">
         ${p.contractFile ? `<a class="file-chip" href="#" data-file-view="${p.contractFile}" data-file-name="${esc(p.contractName || '')}">📄 Contract — ${esc(p.contractName)}</a>` : '<span class="muted" style="margin-right:12px">No contract uploaded.</span>'}
@@ -1153,6 +1180,7 @@ async function renderJob(id) {
       </div>`)}
     </div>` : ''}
 
+    ${IS_CREW ? `
     <div class="panel">
       <h3>${p.overhead ? 'Spending' : 'Invoices &amp; Job Costs'}</h3>
       ${invoices.length ? `
@@ -1235,7 +1263,7 @@ async function renderJob(id) {
         <div class="full" style="text-align:right"><button class="btn gold" id="invAddBtn">+ Add Invoice</button></div>
         <div class="error full" id="invErr"></div>
       </div>`) : ''}
-    </div>
+    </div>` : ''}
 
     ${isAdmin && !p.overhead ? `
     <div class="panel">
@@ -2554,7 +2582,7 @@ async function renderJobPhotos(id) {
 
 /* ---------- PROJECT MANAGERS (admin) ---------- */
 async function renderManagers() {
-  const [pms, crew] = await Promise.all([api('/api/pms'), api('/api/delivery')]);
+  const [pms, crew, subs] = await Promise.all([api('/api/pms'), api('/api/delivery'), api('/api/contractor-logins')]);
   $('#main').innerHTML = `
     <div class="page-head">
       <h1>Project Managers</h1>
@@ -2601,7 +2629,72 @@ async function renderManagers() {
         Delivery logins see the job map, every job's address and lockbox, what each job has cost, and the photos —
         and can add photos and receipts. They cannot see contract prices, payments, material orders or contractors.
       </div>
+    </div>
+
+    <div class="page-head" style="margin-top:28px">
+      <h1>Contractor Logins</h1>
+      <button class="btn gold" id="newSubBtn">+ Add Contractor Login</button>
+    </div>
+    <div class="panel">
+      ${subs.length ? `
+      <table>
+        <thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Jobs</th><th class="right">Actions</th></tr></thead>
+        <tbody>${subs.map((c) => `
+          <tr>
+            <td><b>${esc(c.name)}</b></td>
+            <td>${esc(c.username)}</td>
+            <td>${c.email ? esc(c.email) : '<span class="muted">—</span>'}</td>
+            <td>${c.projectCount}</td>
+            <td class="right">
+              <button class="btn small" data-subpw="${c.id}">Reset Password</button>
+              <button class="btn small danger" data-subdel="${c.id}">Delete</button>
+            </td>
+          </tr>`).join('')}</tbody>
+      </table>` : '<div class="muted">No contractor logins yet.</div>'}
+      <div class="muted" style="margin-top:14px">
+        Contractors only see the jobs you add them to (Edit on the job page). On those jobs they see the job info,
+        address, lockbox code, contract, plans, uploaded documents and photos, and nothing else: no prices,
+        payments, costs, materials, notes or customer details. They cannot change anything.
+      </div>
     </div>`;
+
+  on('#newSubBtn', 'click', () => {
+    openModal(`
+      <h2>Add Contractor Login</h2>
+      <form id="subForm" class="form-grid">
+        <div class="full"><label class="f">Name / Company *</label><input class="f" name="name" required /></div>
+        <div><label class="f">Login Username *</label><input class="f" name="username" required /></div>
+        <div><label class="f">Login Password *</label><input class="f" name="password" required /></div>
+        <div class="full"><label class="f">Email (optional)</label><input class="f" name="email" type="email" /></div>
+        <div class="modal-actions full">
+          <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn gold">Add Contractor</button>
+        </div>
+        <div class="error full" id="subErr"></div>
+      </form>`);
+    on('#subForm', 'submit', async (e) => {
+      e.preventDefault();
+      try {
+        await api('/api/contractor-logins', { method: 'POST', json: Object.fromEntries(new FormData(e.target)) });
+        closeModal(); renderManagers();
+      } catch (err) { $('#subErr').textContent = err.message; }
+    });
+  });
+  document.querySelectorAll('[data-subpw]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const pw = prompt('New password for this contractor login:');
+      if (!pw) return;
+      await api('/api/contractor-logins/' + b.dataset.subpw, { method: 'PUT', json: { password: pw } });
+      alert('Password updated.');
+    })
+  );
+  document.querySelectorAll('[data-subdel]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!await askConfirm('Delete this contractor login? They lose access to every job.')) return;
+      await api('/api/contractor-logins/' + b.dataset.subdel, { method: 'DELETE' });
+      renderManagers();
+    })
+  );
 
   on('#newDelBtn', 'click', () => {
     openModal(`
