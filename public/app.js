@@ -1263,7 +1263,7 @@ async function renderJob(id) {
       </div>`}
       ${shownCosts.length ? `
       <table class="inv-table">
-        <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Paid To</th><th>Invoice</th><th class="right">Cost</th><th style="width:36px"></th></tr></thead>
+        <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Paid To</th><th>Invoice</th><th class="right">Cost</th><th style="width:72px"></th></tr></thead>
         <tbody>
           ${invShown.map((x) => `
           <tr>
@@ -1277,7 +1277,7 @@ async function renderJob(id) {
               ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}" title="Open">📄 View</a>`
               : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(x.amount)}</b></td>
-            <td class="right">${isAdmin ? `<button class="del" data-delinv="${x.id}" title="Delete invoice">✕</button>` : ''}</td>
+            <td class="right row-acts">${isAdmin ? `<button class="del edit" data-editinv="${x.id}" title="Edit">✎</button><button class="del" data-delinv="${x.id}" title="Delete invoice">✕</button>` : ''}</td>
           </tr>`).join('')}
           <tr class="totals-row">
             <td colspan="5">${filtered ? 'Filtered total' : 'Total cost'} (${shownCosts.length} entr${shownCosts.length === 1 ? 'y' : 'ies'})</td>
@@ -1601,6 +1601,12 @@ async function renderJob(id) {
       } catch (err) { if (was) sel.value = was; alert(err.message); }
     })
   );
+  document.querySelectorAll('[data-editinv]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const x = invoices.find((v) => v.id === Number(b.dataset.editinv));
+      if (x) editCost(id, x, cats, () => renderJob(id));
+    })
+  );
   document.querySelectorAll('[data-delinv]').forEach((b) =>
     b.addEventListener('click', async () => {
       if (!await askConfirm('Delete this invoice? The attached file is removed too.')) return;
@@ -1731,7 +1737,7 @@ async function renderReceipts() {
     <div class="panel">
       <h3>Recent Receipts <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${filed.length} filed${filedTotal ? ', ' + money(filedTotal) : ''}</span></h3>
       <table class="filed-table">
-        <thead><tr><th>Date</th><th>What</th><th>Category</th><th>Paid To</th><th>Job</th><th>Receipt</th><th class="right">Cost</th></tr></thead>
+        <thead><tr><th>Date</th><th>What</th><th>Category</th><th>Paid To</th><th>Job</th><th>Receipt</th><th class="right">Cost</th>${IS_STAFF ? '<th style="width:36px"></th>' : ''}</tr></thead>
         <tbody>
           ${filedShown.map((x) => `
           <tr>
@@ -1744,6 +1750,7 @@ async function renderReceipts() {
             <td><a href="#/job/${x.projectId}">${esc(x.projectName)}</a></td>
             <td>${x.file ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}">📄 View</a>` : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(x.amount)}</b></td>
+            ${IS_STAFF ? `<td class="right"><button class="del edit" data-editfiled="${x.id}" title="Edit">✎</button></td>` : ''}
           </tr>`).join('')}
         </tbody>
       </table>
@@ -1765,6 +1772,13 @@ async function renderReceipts() {
       sel.disabled = false;
     });
   });
+
+  document.querySelectorAll('[data-editfiled]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const x = filed.find((v) => v.id === Number(b.dataset.editfiled));
+      if (x) editCost(x.projectId, x, x.overhead ? OVERHEAD_CATEGORIES : EXPENSE_CATEGORIES, () => renderReceipts());
+    })
+  );
 
   wirePhotoUploader(null, () => renderReceipts(), {
     endpoint: '/api/receipts', field: 'receipt', thumbs: false, prepare: prepReceipt,
@@ -3072,6 +3086,48 @@ function openLightbox(photos, startIdx) {
     sx = null;
   }, { passive: true });
   show(idx);
+}
+
+/* ---------- edit a logged cost / filed receipt ----------
+ * One dialog for every cost row: job costs, general spending, Design K&B and the
+ * Receipts tab. Leaving the file picker empty keeps the attached receipt as it is. */
+function editCost(projectId, x, cats, onSaved) {
+  const list = cats.includes(x.category) ? cats : [...cats, x.category || 'Other'];
+  openModal(`
+    <h2>Edit ${x.checkId ? 'Check Payment' : 'Receipt'}</h2>
+    <form id="costForm" class="form-grid">
+      <div class="full"><label class="f">Description *</label><input class="f" name="desc" required value="${esc(x.desc || '')}" /></div>
+      <div><label class="f">Cost ($) *</label><input class="f" name="amount" type="number" step="0.01" min="0" required value="${x.amount || ''}" /></div>
+      <div><label class="f">Paid To</label><input class="f" name="paidTo" value="${esc(x.paidTo || '')}" /></div>
+      <div><label class="f">Category</label><select class="f" name="category">${categoryOptions(x.category || 'Other', list)}</select></div>
+      <div><label class="f">Date</label><input class="f" name="date" type="date" value="${esc(x.date || '')}" /></div>
+      ${x.checkId ? '' : `<div class="full"><label class="f">Replace receipt file ${x.fileName ? '(current: ' + esc(x.fileName) + ')' : ''}</label>
+        <input class="f" name="invoice" type="file" accept=".pdf,image/*" /></div>`}
+      <div class="modal-actions full">
+        <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
+        <button type="submit" class="btn gold">Save Changes</button>
+      </div>
+      <div class="error full" id="costErr"></div>
+    </form>`);
+  on('#costForm', 'submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const amount = parseFloat(fd.get('amount'));
+    if (!String(fd.get('desc') || '').trim()) { $('#costErr').textContent = 'Enter a description.'; return; }
+    if (!amount || amount <= 0) { $('#costErr').textContent = 'Enter a valid cost.'; return; }
+    const f = fd.get('invoice');
+    if (!f || !f.size) fd.delete('invoice');
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      await api(`/api/projects/${projectId}/invoices/${x.id}`, { method: 'PUT', body: fd });
+      closeModal();
+      onSaved();
+    } catch (err) {
+      $('#costErr').textContent = err.message;
+      btn.disabled = false; btn.textContent = 'Save Changes';
+    }
+  });
 }
 
 /* ---------- modal helpers ---------- */
