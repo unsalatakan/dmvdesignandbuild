@@ -1737,7 +1737,7 @@ async function renderReceipts() {
     <div class="panel">
       <h3>Recent Receipts <span class="muted" style="font-size:13px;text-transform:none;letter-spacing:0">— ${filed.length} filed${filedTotal ? ', ' + money(filedTotal) : ''}</span></h3>
       <table class="filed-table">
-        <thead><tr><th>Date</th><th>What</th><th>Category</th><th>Paid To</th><th>Job</th><th>Receipt</th><th class="right">Cost</th>${IS_STAFF ? '<th style="width:36px"></th>' : ''}</tr></thead>
+        <thead><tr><th>Date</th><th>What</th><th>Category</th><th>Paid To</th><th>Job</th><th>Receipt</th><th class="right">Cost</th>${IS_STAFF ? '<th style="width:72px"></th>' : ''}</tr></thead>
         <tbody>
           ${filedShown.map((x) => `
           <tr>
@@ -1750,7 +1750,7 @@ async function renderReceipts() {
             <td><a href="#/job/${x.projectId}">${esc(x.projectName)}</a></td>
             <td>${x.file ? `<a class="mini-chip" href="#" data-file-view="${x.file}" data-file-name="${esc(x.fileName || '')}">📄 View</a>` : '<span class="muted">—</span>'}</td>
             <td class="right"><b>${money(x.amount)}</b></td>
-            ${IS_STAFF ? `<td class="right"><button class="del edit" data-editfiled="${x.id}" title="Edit">✎</button></td>` : ''}
+            ${IS_STAFF ? `<td class="right row-acts"><button class="del edit" data-editfiled="${x.id}" title="Edit">✎</button><button class="del" data-delfiled="${x.id}" data-proj="${x.projectId}" title="Delete receipt">✕</button></td>` : ''}
           </tr>`).join('')}
         </tbody>
       </table>
@@ -1777,6 +1777,16 @@ async function renderReceipts() {
     b.addEventListener('click', () => {
       const x = filed.find((v) => v.id === Number(b.dataset.editfiled));
       if (x) editCost(x.projectId, x, x.overhead ? OVERHEAD_CATEGORIES : EXPENSE_CATEGORIES, () => renderReceipts());
+    })
+  );
+
+  document.querySelectorAll('[data-delfiled]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!await askConfirm('Delete this receipt? It comes off the job\'s costs and the file is removed too.')) return;
+      try {
+        await api(`/api/projects/${b.dataset.proj}/invoices/${b.dataset.delfiled}`, { method: 'DELETE' });
+        renderReceipts();
+      } catch (err) { alert(err.message); }
     })
   );
 
