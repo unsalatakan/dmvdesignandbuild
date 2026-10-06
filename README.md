@@ -110,7 +110,7 @@ Note this is different from a **contractor** — contractors are who you write c
 
 Add delivery logins on the **Managers** page, under Delivery Crew.
 
-**Contractor logins** are for the trades working a job. Create them on the **Managers** page under Contractor Logins, then open a job, hit **Edit** and tick who has access under "Contractors with access to this job". A contractor sees only the jobs they're ticked on, and on those only the job info, address, lockbox code, contract, plans, uploaded documents and photos. They can't see prices, payments, costs, materials, notes or the customer, and they can't change anything. This is enforced by the server, not just hidden on screen. (Not the same as the **Contractors** tab, which is the list of people you write checks to.)
+**Contractor logins** are for the trades working a job. Create them on the **Managers** page under Contractor Logins, then click a contractor (or its **Jobs** button) and tick the jobs they can see. You can also do it from a job: hit **Edit** and tick who has access under "Contractors with access to this job". A contractor sees only the jobs they're ticked on, and on those only the job info, address, lockbox code, contract, plans, uploaded documents and photos. They can't see prices, payments, costs, materials, notes or the customer, and they can't change anything. This is enforced by the server, not just hidden on screen. (Not the same as the **Contractors** tab, which is the list of people you write checks to.)
 
 ## Contractors and checks (admin only)
 

@@ -793,6 +793,20 @@ route('PUT', /^\/api\/contractor-logins\/(\d+)$/, (req, res, m, body) => {
   json(res, 200, out);
 }, { admin: true });
 
+/* set every job a contractor login can see in one go, from the contractor's side */
+route('PUT', /^\/api\/contractor-logins\/(\d+)\/jobs$/, (req, res, m, body) => {
+  const id = Number(m[1]);
+  if (!db.users.some((u) => u.id === id && u.role === 'contractor')) return json(res, 404, { error: 'Contractor login not found' });
+  const want = new Set((Array.isArray(body.projectIds) ? body.projectIds : []).map(Number));
+  for (const p of db.projects) {
+    if (p.overhead) continue;
+    const ids = (p.contractorIds || []).filter((x) => x !== id);
+    if (want.has(p.id)) ids.push(id);
+    p.contractorIds = ids;
+  }
+  saveDb(); json(res, 200, { ok: true, projectIds: db.projects.filter((p) => (p.contractorIds || []).includes(id)).map((p) => p.id) });
+}, { admin: true });
+
 route('DELETE', /^\/api\/contractor-logins\/(\d+)$/, (req, res, m) => {
   const id = Number(m[1]);
   db.users = db.users.filter((u) => !(u.id === id && u.role === 'contractor'));

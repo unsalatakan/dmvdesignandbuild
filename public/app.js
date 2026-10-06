@@ -2641,18 +2641,20 @@ async function renderManagers() {
         <thead><tr><th>Name</th><th>Username</th><th>Email</th><th>Jobs</th><th class="right">Actions</th></tr></thead>
         <tbody>${subs.map((c) => `
           <tr>
-            <td><b>${esc(c.name)}</b></td>
+            <td><a href="#" data-subjobs="${c.id}"><b>${esc(c.name)}</b></a></td>
             <td>${esc(c.username)}</td>
             <td>${c.email ? esc(c.email) : '<span class="muted">—</span>'}</td>
             <td>${c.projectCount}</td>
             <td class="right">
+              <button class="btn small gold" data-subjobs="${c.id}">Jobs</button>
               <button class="btn small" data-subpw="${c.id}">Reset Password</button>
               <button class="btn small danger" data-subdel="${c.id}">Delete</button>
             </td>
           </tr>`).join('')}</tbody>
       </table>` : '<div class="muted">No contractor logins yet.</div>'}
       <div class="muted" style="margin-top:14px">
-        Contractors only see the jobs you add them to (Edit on the job page). On those jobs they see the job info,
+        Click a contractor (or <b>Jobs</b>) to pick which jobs they can see. You can also tick them on a job's Edit form.
+        Contractors only see the jobs you add them to. On those jobs they see the job info,
         address, lockbox code, contract, plans, uploaded documents and photos, and nothing else: no prices,
         payments, costs, materials, notes or customer details. They cannot change anything.
       </div>
@@ -2680,6 +2682,36 @@ async function renderManagers() {
       } catch (err) { $('#subErr').textContent = err.message; }
     });
   });
+  document.querySelectorAll('[data-subjobs]').forEach((b) =>
+    b.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const sub = subs.find((c) => c.id === Number(b.dataset.subjobs));
+      const jobs = realJobs(await api('/api/projects'));
+      const order = Object.fromEntries(STATUS_TABLE.map(([k], i) => [k, i]));
+      jobs.sort((a, z) => order[statusOf(a)] - order[statusOf(z)] || String(a.name).localeCompare(String(z.name)));
+      openModal(`
+        <h2>Jobs for ${esc(sub.name)}</h2>
+        <div class="muted" style="margin-bottom:12px">Tick the jobs ${esc(sub.name)} can see. They get the job info, address, lockbox, contract, plans, documents and photos. Nothing about money.</div>
+        ${jobs.length ? `<div style="max-height:50vh;overflow:auto">${jobs.map((p) => `
+          <label class="doc-share" style="display:flex;gap:8px;align-items:center;padding:6px 0">
+            <input type="checkbox" data-jobpick value="${p.id}" ${(p.contractorIds || []).includes(sub.id) ? 'checked' : ''} />
+            <span><b>${esc(p.name)}</b> <span class="muted">${esc(p.address || '')}</span></span>
+            <span style="margin-left:auto">${statusBadge(p)}</span>
+          </label>`).join('')}</div>` : '<div class="muted">No jobs yet.</div>'}
+        <div class="modal-actions">
+          <button type="button" class="btn ghost" style="color:#555;border-color:#ccc" onclick="closeModal()">Cancel</button>
+          <button type="button" class="btn gold" id="subJobsSave">Save</button>
+        </div>
+        <div class="error" id="subJobsErr"></div>`);
+      on('#subJobsSave', 'click', async () => {
+        const projectIds = [...document.querySelectorAll('[data-jobpick]:checked')].map((x) => Number(x.value));
+        try {
+          await api('/api/contractor-logins/' + sub.id + '/jobs', { method: 'PUT', json: { projectIds } });
+          closeModal(); renderManagers();
+        } catch (err) { $('#subJobsErr').textContent = err.message; }
+      });
+    })
+  );
   document.querySelectorAll('[data-subpw]').forEach((b) =>
     b.addEventListener('click', async () => {
       const pw = prompt('New password for this contractor login:');
