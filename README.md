@@ -94,21 +94,23 @@ Note this is different from a **contractor** — contractors are who you write c
 
 ## Who sees what
 
-| | Admin | Project Manager | Delivery | Customer |
-|---|---|---|---|---|
-| Jobs | all | assigned only | all | own only |
-| Address, lockbox, plans | ✓ | ✓ | ✓ | ✓ |
-| Contract price | ✓ | ✓ | — | ✓ |
-| Job costs (invoices) | ✓ | ✓ | view only | — |
-| Payments & schedule | ✓ | ✓ | — | — |
-| Material orders | ✓ | ✓ | — | — |
-| Photos | ✓ | ✓ | view + add | view |
-| Documents | ✓ | ✓ | view + add | shared ones only |
-| Receipts tab | ✓ | ✓ | ✓ | — |
-| Contractors & checks | ✓ | — | — | — |
-| Home page | full dashboard | full dashboard | map only | jobs summary |
+| | Admin | Project Manager | Delivery | Customer | Contractor |
+|---|---|---|---|---|---|
+| Jobs | all | assigned only | all | own only | assigned only |
+| Address, lockbox, plans | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Contract price | ✓ | ✓ | — | ✓ | — |
+| Job costs (invoices) | ✓ | ✓ | view only | — | — |
+| Payments & schedule | ✓ | ✓ | — | — | — |
+| Material orders | ✓ | ✓ | — | — | — |
+| Photos | ✓ | ✓ | view + add | view | view |
+| Documents | ✓ | ✓ | view + add | shared ones only | view all |
+| Receipts tab | ✓ | ✓ | ✓ | — | — |
+| Contractors & checks | ✓ | — | — | — | — |
+| Home page | full dashboard | full dashboard | map only | jobs summary | their jobs + map |
 
 Add delivery logins on the **Managers** page, under Delivery Crew.
+
+**Contractor logins** are for the trades working a job. Create them on the **Managers** page under Contractor Logins, then open a job, hit **Edit** and tick who has access under "Contractors with access to this job". A contractor sees only the jobs they're ticked on, and on those only the job info, address, lockbox code, contract, plans, uploaded documents and photos. They can't see prices, payments, costs, materials, notes or the customer, and they can't change anything. This is enforced by the server, not just hidden on screen. (Not the same as the **Contractors** tab, which is the list of people you write checks to.)
 
 ## Contractors and checks (admin only)
 
