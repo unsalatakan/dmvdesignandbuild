@@ -12,9 +12,9 @@ const STATUS_TABLE = [
   ['talks', 'In Talks — Not Signed', 'Quoted or in discussion, no contract yet'],
   ['done', 'Completed', 'Finished and closed out'],
 ];
-/* every job is Residential or Commercial; older jobs were marked Residential */
-const JOB_TYPES = [['residential', 'Residential'], ['commercial', 'Commercial']];
-const jobTypeOf = (p) => (p.jobType === 'commercial' ? 'commercial' : 'residential');
+/* every job is Residential, Commercial or a Service Call; older jobs were marked Residential */
+const JOB_TYPES = [['residential', 'Residential'], ['commercial', 'Commercial'], ['service', 'Service Call']];
+const jobTypeOf = (p) => (JOB_TYPES.some(([k]) => k === p.jobType) ? p.jobType : 'residential');
 const statusOf = (p) => (STATUS[p.status] ? p.status : 'active');
 const statusBadge = (p) => { const [label, color] = STATUS[statusOf(p)]; return `<span class="badge" style="background:${color};color:#fff">${label}</span>`; };
 
@@ -712,7 +712,7 @@ window.addEventListener('hashchange', () => { $('#mapFull').classList.add('hidde
 
 /* ---------- JOBS LIST ---------- */
 let jobsFilter = 'all', jobsQuery = '';
-let jobsType = (() => { try { return localStorage.getItem('jobsType') === 'commercial' ? 'commercial' : 'residential'; } catch { return 'residential'; } })();
+let jobsType = (() => { try { return jobTypeOf({ jobType: localStorage.getItem('jobsType') }); } catch { return 'residential'; } })();
 async function renderJobs() {
   const allJobs = realJobs(await api('/api/projects'));
   const isAdmin = IS_STAFF; // admin or project manager — not delivery

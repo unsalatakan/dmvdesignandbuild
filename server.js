@@ -130,7 +130,7 @@ function decryptTaxId(blob) {
 }
 
 /* ================= tiny JSON database ================= */
-const JOB_TYPES = ['residential', 'commercial'];
+const JOB_TYPES = ['residential', 'commercial', 'service'];
 const hash = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 let db;
 function nextId() { return db.seq++; }
@@ -174,7 +174,7 @@ function loadDb() {
     });
     saveDb();
   }
-  /* Every job is Residential or Commercial. Jobs made before this existed are
+  /* Every job is Residential, Commercial or a Service Call. Jobs made before this existed are
    * marked Residential; the type can be changed on the job's Edit form. */
   let typed = false;
   for (const p of db.projects) {
@@ -855,7 +855,7 @@ route('GET', /^\/api\/projects\/(\d+)$/, (req, res, m, b, user) => {
 route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
   const { fields, files } = body;
   if (!fields.name || !fields.address) return json(res, 400, { error: 'Name and address are required' });
-  if (!JOB_TYPES.includes(fields.jobType)) return json(res, 400, { error: 'Pick whether the job is Residential or Commercial' });
+  if (!JOB_TYPES.includes(fields.jobType)) return json(res, 400, { error: 'Pick whether the job is Residential, Commercial or a Service Call' });
   await storeFile(files.contract);
   await storeFile(files.plan);
   const geo = await geocode(fields.address);
