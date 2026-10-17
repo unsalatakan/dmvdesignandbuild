@@ -12,6 +12,9 @@ const STATUS_TABLE = [
   ['talks', 'In Talks — Not Signed', 'Quoted or in discussion, no contract yet'],
   ['done', 'Completed', 'Finished and closed out'],
 ];
+/* every job is Residential or Commercial; older jobs were marked Residential */
+const JOB_TYPES = [['residential', 'Residential'], ['commercial', 'Commercial']];
+const jobTypeOf = (p) => (p.jobType === 'commercial' ? 'commercial' : 'residential');
 const statusOf = (p) => (STATUS[p.status] ? p.status : 'active');
 const statusBadge = (p) => { const [label, color] = STATUS[statusOf(p)]; return `<span class="badge" style="background:${color};color:#fff">${label}</span>`; };
 
@@ -709,9 +712,17 @@ window.addEventListener('hashchange', () => { $('#mapFull').classList.add('hidde
 
 /* ---------- JOBS LIST ---------- */
 let jobsFilter = 'all', jobsQuery = '';
+let jobsType = (() => { try { return localStorage.getItem('jobsType') === 'commercial' ? 'commercial' : 'residential'; } catch { return 'residential'; } })();
 async function renderJobs() {
-  const projects = realJobs(await api('/api/projects'));
+  const allJobs = realJobs(await api('/api/projects'));
   const isAdmin = IS_STAFF; // admin or project manager — not delivery
+  /* Residential / Commercial tabs: the page only ever shows one type at a time.
+   * Customers and contractors only get the tabs when their jobs are of both types. */
+  const typesHere = new Set(allJobs.map(jobTypeOf));
+  const showTypeTabs = IS_CREW || typesHere.size > 1;
+  if (!showTypeTabs && typesHere.size === 1) jobsType = [...typesHere][0];
+  const projects = allJobs.filter((p) => jobTypeOf(p) === jobsType);
+  const typeLabel = JOB_TYPES.find(([k]) => k === jobsType)[1];
   const card = (p) => `
       <div class="job-card" onclick="location.hash='#/job/${p.id}'">
         <h4>${esc(p.name)}</h4>
@@ -737,7 +748,7 @@ async function renderJobs() {
     const shown = projects.filter((p) =>
       (jobsFilter === 'all' || statusOf(p) === jobsFilter) &&
       (!q || [p.name, p.address, p.customerName].some((v) => v && v.toLowerCase().includes(q))));
-    if (!projects.length) return '<div class="panel muted">No jobs yet.' + (isAdmin ? ' Click “+ New Project” to create your first job.' : '') + '</div>';
+    if (!projects.length) return `<div class="panel muted">No ${showTypeTabs ? typeLabel.toLowerCase() + ' ' : ''}jobs yet.` + (ME.role === 'admin' ? ' Click “+ New Project” to create one.' : '') + '</div>';
     if (!shown.length) return '<div class="panel muted">No jobs match your search.</div>';
     if (!isAdmin) return `<div class="job-grid">${shown.map(card).join('')}</div>`;
     /* group jobs under their customer */
@@ -809,6 +820,9 @@ async function renderJobs() {
       <h1>${isAdmin ? 'Jobs' : 'My Jobs'}</h1>
       ${ME.role === 'admin' ? '<button class="btn gold" id="newProjBtn">+ New Project</button>' : ''}
     </div>
+    ${showTypeTabs ? `<div class="type-tabs">
+      ${JOB_TYPES.map(([k, label]) => `<button class="type-tab ${jobsType === k ? 'active' : ''}" data-jtype="${k}">${label} <span class="n">${allJobs.filter((p) => jobTypeOf(p) === k).length}</span></button>`).join('')}
+    </div>` : ''}
     ${isAdmin && projects.length ? overview() : ''}
     ${isAdmin ? `
     <div class="jobs-controls">
@@ -819,6 +833,13 @@ async function renderJobs() {
     </div>` : ''}
     <div id="jobsList">${buildBody()}</div>`;
   wireLockboxCopy();
+  document.querySelectorAll('[data-jtype]').forEach((b) =>
+    b.addEventListener('click', () => {
+      jobsType = b.dataset.jtype;
+      try { localStorage.setItem('jobsType', jobsType); } catch {}
+      renderJobs();
+    })
+  );
   if (isAdmin) {
     if (ME.role === 'admin') on('#newProjBtn', 'click', () => projectModal());
     const refresh = () => { $('#jobsList').innerHTML = buildBody(); wireLockboxCopy($('#jobsList')); };
@@ -919,6 +940,11 @@ async function projectModal(p) {
   openModal(`
     <h2>${isEdit ? 'Edit Project' : 'New Project'}</h2>
     <form id="projForm" class="form-grid">
+      <div class="full"><label class="f">Job Type *</label>
+        <div class="type-pick">
+          ${JOB_TYPES.map(([k, label]) => `<label><input type="radio" name="jobType" value="${k}" required ${isEdit && jobTypeOf(p) === k ? 'checked' : ''} /> <span>${label}</span></label>`).join('')}
+        </div>
+      </div>
       <div class="full"><label class="f">Project Name *</label><input class="f" name="name" required value="${isEdit ? esc(p.name) : ''}" /></div>
       <div class="full"><label class="f">Address * (used to pin the job on the map)</label><input class="f" name="address" required value="${isEdit ? esc(p.address) : ''}" /></div>
       <div class="full"><label class="f">Lockbox Code / Access Info</label><input class="f" name="lockbox" placeholder="e.g. 1234 — back door lockbox" value="${isEdit && p.lockbox ? esc(p.lockbox) : ''}" /></div>
@@ -1088,6 +1114,7 @@ async function renderJob(id) {
         <div><div class="k">Lockbox Code</div><div class="v">${p.lockbox ? `<span class="lockbox-code" data-lb="${esc(p.lockbox)}" title="Tap to copy">🔒 ${esc(p.lockbox)}</span>` : '<span class="muted">—</span>'}</div></div>
         ${IS_DELIVERY || IS_CONTRACTOR ? '' : `<div><div class="k">Price</div><div class="v">${money(p.price)}</div></div>`}
         <div><div class="k">Job Start Date</div><div class="v">${fmtDate(p.startDate)}</div></div>
+        <div><div class="k">Job Type</div><div class="v">${JOB_TYPES.find(([k]) => k === jobTypeOf(p))[1]}</div></div>
         ${IS_CONTRACTOR ? `<div><div class="k">Status</div><div class="v">${statusBadge(p)}</div></div>` : `<div><div class="k">Customer</div><div class="v">${esc(p.customerName || '—')}</div></div>`}
         ${isAdmin ? `<div><div class="k">Contractors</div><div class="v">${(p.contractorNames || []).length ? p.contractorNames.map(esc).join(', ') : '<span class="muted">—</span>'}</div></div>` : ''}
       </div>

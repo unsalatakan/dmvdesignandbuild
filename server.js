@@ -130,6 +130,7 @@ function decryptTaxId(blob) {
 }
 
 /* ================= tiny JSON database ================= */
+const JOB_TYPES = ['residential', 'commercial'];
 const hash = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 let db;
 function nextId() { return db.seq++; }
@@ -173,6 +174,14 @@ function loadDb() {
     });
     saveDb();
   }
+  /* Every job is Residential or Commercial. Jobs made before this existed are
+   * marked Residential; the type can be changed on the job's Edit form. */
+  let typed = false;
+  for (const p of db.projects) {
+    if (p.overhead || p.dkb || JOB_TYPES.includes(p.jobType)) continue;
+    p.jobType = 'residential'; typed = true;
+  }
+  if (typed) saveDb();
   if (!db.users.some((u) => u.role === 'admin')) {
     db.users.push({ id: nextId(), username: 'dmv', password: hash('dmv123'), role: 'admin', name: 'DMV Design and Build' });
     saveDb();
@@ -620,7 +629,7 @@ function projectOut(p, user) {
 /* What a contractor login sees on a job they are assigned to: job info, address,
  * lockbox, contract and plans. Documents and photos are added in projectOut. */
 const CONTRACTOR_FIELDS = [
-  'id', 'name', 'address', 'lat', 'lng', 'lockbox', 'status', 'startDate',
+  'id', 'name', 'address', 'lat', 'lng', 'lockbox', 'status', 'startDate', 'jobType',
   'contractFile', 'contractName', 'planFile', 'planName',
 ];
 function canAccess(p, user) {
@@ -846,12 +855,14 @@ route('GET', /^\/api\/projects\/(\d+)$/, (req, res, m, b, user) => {
 route('POST', /^\/api\/projects$/, async (req, res, m, body, user) => {
   const { fields, files } = body;
   if (!fields.name || !fields.address) return json(res, 400, { error: 'Name and address are required' });
+  if (!JOB_TYPES.includes(fields.jobType)) return json(res, 400, { error: 'Pick whether the job is Residential or Commercial' });
   await storeFile(files.contract);
   await storeFile(files.plan);
   const geo = await geocode(fields.address);
   const p = {
     id: nextId(),
     name: fields.name, address: fields.address,
+    jobType: fields.jobType,
     lockbox: (fields.lockbox || '').trim() || null,
     price: Number(fields.price) || 0,
     startDate: fields.startDate || null,
@@ -880,6 +891,7 @@ route('PUT', /^\/api\/projects\/(\d+)$/, async (req, res, m, body, user) => {
   if (fields.lockbox !== undefined) p.lockbox = (fields.lockbox || '').trim() || null;
   if (fields.price !== undefined) p.price = Number(fields.price) || 0;
   if (fields.startDate !== undefined) p.startDate = fields.startDate || null;
+  if (!p.overhead && !p.dkb && JOB_TYPES.includes(fields.jobType)) p.jobType = fields.jobType;
   if (fields.status !== undefined && ['talks', 'upcoming', 'active', 'done'].includes(fields.status)) p.status = fields.status;
   if (fields.customerId !== undefined) p.customerId = fields.customerId ? Number(fields.customerId) : null;
   if (fields.pmId !== undefined) p.pmId = fields.pmId ? Number(fields.pmId) : null;
