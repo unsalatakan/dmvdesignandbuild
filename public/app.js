@@ -13,7 +13,7 @@ const STATUS_TABLE = [
   ['done', 'Completed', 'Finished and closed out'],
 ];
 /* every job is Residential, Commercial or a Service Call; older jobs were marked Residential */
-const JOB_TYPES = [['residential', 'Residential'], ['commercial', 'Commercial'], ['service', 'Service Call']];
+const JOB_TYPES = [['commercial', 'Commercial'], ['residential', 'Residential'], ['service', 'Service Call']];
 const jobTypeOf = (p) => (JOB_TYPES.some(([k]) => k === p.jobType) ? p.jobType : 'residential');
 const statusOf = (p) => (STATUS[p.status] ? p.status : 'active');
 const statusBadge = (p) => { const [label, color] = STATUS[statusOf(p)]; return `<span class="badge" style="background:${color};color:#fff">${label}</span>`; };
@@ -712,7 +712,8 @@ window.addEventListener('hashchange', () => { $('#mapFull').classList.add('hidde
 
 /* ---------- JOBS LIST ---------- */
 let jobsFilter = 'all', jobsQuery = '';
-let jobsType = (() => { try { return jobTypeOf({ jobType: localStorage.getItem('jobsType') }); } catch { return 'residential'; } })();
+// Commercial is the first tab and opens by default; a tab picked earlier is remembered
+let jobsType = (() => { try { return jobTypeOf({ jobType: localStorage.getItem('jobsTab') || 'commercial' }); } catch { return 'commercial'; } })();
 async function renderJobs() {
   const allJobs = realJobs(await api('/api/projects'));
   const isAdmin = IS_STAFF; // admin or project manager — not delivery
@@ -836,7 +837,7 @@ async function renderJobs() {
   document.querySelectorAll('[data-jtype]').forEach((b) =>
     b.addEventListener('click', () => {
       jobsType = b.dataset.jtype;
-      try { localStorage.setItem('jobsType', jobsType); } catch {}
+      try { localStorage.setItem('jobsTab', jobsType); } catch {}
       renderJobs();
     })
   );
